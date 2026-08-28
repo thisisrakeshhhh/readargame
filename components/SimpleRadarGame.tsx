@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { GeoLocation } from '../types/tactical';
 import { WORLD_LOCATIONS } from '../utils/geoLocations';
 import { StartScreen } from './StartScreen';
+import { RealGeographicMap } from './RealGeographicMap';
 import { RadarCanvas2D, Target2D } from './RadarCanvas2D';
 import { RadarControlsHUD } from './RadarControlsHUD';
 import { audioEngine } from './AudioEngine';
@@ -45,6 +46,13 @@ export const SimpleRadarGame: React.FC = () => {
         <StartScreen onEnterRadar={handleEnterRadar} />
       ) : (
         <>
+          {/* Layer 1: Real Geographic Map (Leaflet with Dark Tactical CartoDB Tiles) */}
+          <RealGeographicMap
+            location={selectedLocation}
+            radarRangeKm={radarRangeKm}
+          />
+
+          {/* Layer 2: 2D Tactical Radar Canvas Overlay */}
           <RadarCanvas2D
             location={selectedLocation}
             radarRangeKm={radarRangeKm}
@@ -54,6 +62,7 @@ export const SimpleRadarGame: React.FC = () => {
             onUpdateStats={(updater) => setStats(updater)}
           />
 
+          {/* Layer 3: Tactical Controls HUD */}
           <RadarControlsHUD
             location={selectedLocation}
             stats={stats}
