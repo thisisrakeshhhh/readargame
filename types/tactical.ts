@@ -11,7 +11,7 @@ export interface GeoLocation {
   flag: string;
   lat: number;
   lng: number;
-  theaterType: 'Capital / Urban Theater' | 'Coastal / Maritime Theater' | 'Northern Defense Sector' | 'Frontier Border Command' | 'Strategic Air Base';
+  theaterType: string;
   defenseGrade: 'ALPHA' | 'BRAVO' | 'DELTA' | 'OMEGA';
   description: string;
   silosCount: number;
