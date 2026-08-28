@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { GeoLocation } from '../types/tactical';
 import { WORLD_LOCATIONS, searchLocations } from '../utils/geoLocations';
-import { Search, MapPin, Navigation, Radio, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Search, Navigation, Radio, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 interface StartScreenProps {
   onEnterRadar: (location: GeoLocation) => void;
@@ -13,13 +13,13 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLocation, setSelectedLocation] = useState<GeoLocation>(WORLD_LOCATIONS[0]);
   const [isLocating, setIsLocating] = useState(false);
-  const [searchResults, setSearchResults] = useState<GeoLocation[]>(WORLD_LOCATIONS.slice(0, 8));
+  const [searchResults, setSearchResults] = useState<GeoLocation[]>(WORLD_LOCATIONS.slice(0, 10));
 
-  // Dynamic Search with Local DB + OpenStreetMap Geocoding fallback
+  // Dynamic Search with Local DB + OpenStreetMap Global Geocoding fallback
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
-      setSearchResults(WORLD_LOCATIONS.slice(0, 8));
+      setSearchResults(WORLD_LOCATIONS.slice(0, 10));
       return;
     }
 
@@ -28,9 +28,9 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
       setSearchResults(localMatches);
       setSelectedLocation(localMatches[0]);
     } else {
-      // Async geocode fallback using OpenStreetMap Nominatim API for ANY city/town in the world
+      // Async geocode fallback for ANY international city in the world
       const timer = setTimeout(() => {
-        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(trimmed)}&limit=5`)
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(trimmed)}&limit=6`)
           .then((res) => res.json())
           .then((data) => {
             if (Array.isArray(data) && data.length > 0) {
@@ -43,12 +43,12 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
                 flag: '📍',
                 lat: parseFloat(item.lat),
                 lng: parseFloat(item.lon),
-                theaterType: 'Custom Geographic Sector',
+                theaterType: 'International Defense Sector',
                 defenseGrade: 'ALPHA',
-                description: `Real geographic sector at ${parseFloat(item.lat).toFixed(2)}°N, ${parseFloat(item.lon).toFixed(2)}°E`,
-                silosCount: 4,
-                shipsCount: 0,
-                jetsCount: 4,
+                description: `Real strategic sector at ${parseFloat(item.lat).toFixed(2)}°N, ${parseFloat(item.lon).toFixed(2)}°E`,
+                silosCount: 6,
+                shipsCount: 2,
+                jetsCount: 6,
               }));
               setSearchResults(geocoded);
               setSelectedLocation(geocoded[0]);
@@ -106,7 +106,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
         };
 
         setSelectedLocation(userGeoLocation);
-        setSearchResults([userGeoLocation, ...WORLD_LOCATIONS.slice(0, 5)]);
+        setSearchResults([userGeoLocation, ...WORLD_LOCATIONS.slice(0, 6)]);
       },
       (err) => {
         setIsLocating(false);
@@ -138,14 +138,14 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
             <h1 className="text-3xl font-black tracking-widest text-emerald-300">READAR</h1>
           </div>
           <p className="text-xs text-emerald-500/80 font-bold uppercase tracking-wider">
-            TACTICAL RADAR SIMULATION
+            INTERNATIONAL TACTICAL RADAR SIMULATION
           </p>
         </div>
 
         {/* Location Search Box */}
         <div className="space-y-2">
           <label className="block text-xs font-bold text-emerald-400/90 uppercase tracking-wider">
-            SELECT OPERATION LOCATION
+            SELECT INTERNATIONAL THEATER
           </label>
           
           <div className="relative">
@@ -154,24 +154,33 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search any city or country (e.g. Palwal, Tokyo, Kyiv, Moscow)..."
+              placeholder="Search any international city (e.g. London, New York, Tokyo, Paris)..."
               className="w-full bg-black/80 border border-emerald-500/50 rounded-xl pl-9 pr-4 py-2.5 text-xs text-emerald-200 placeholder-emerald-700/60 focus:outline-none focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400 transition-all"
             />
           </div>
 
-          {/* Quick Filter Buttons */}
-          <div className="flex gap-1.5 overflow-x-auto py-1">
-            {['India', 'Japan', 'Ukraine', 'Russia', 'Iran', 'USA', 'UK'].map((c) => (
+          {/* Quick Filter Buttons (US / UK / International Powers) */}
+          <div className="flex gap-1.5 overflow-x-auto py-1 custom-scrollbar">
+            {[
+              { label: 'USA', query: 'United States' },
+              { label: 'UK', query: 'United Kingdom' },
+              { label: 'Japan', query: 'Japan' },
+              { label: 'Germany', query: 'Germany' },
+              { label: 'France', query: 'France' },
+              { label: 'Israel', query: 'Israel' },
+              { label: 'Ukraine', query: 'Ukraine' },
+              { label: 'Russia', query: 'Russia' },
+            ].map((item) => (
               <button
-                key={c}
-                onClick={() => handleQuickFilter(c)}
-                className={`px-2 py-0.5 rounded border text-[10px] transition-all cursor-pointer shrink-0 ${
-                  searchQuery.toLowerCase() === c.toLowerCase()
-                    ? 'bg-emerald-500 text-black font-bold border-emerald-400'
+                key={item.label}
+                onClick={() => handleQuickFilter(item.query)}
+                className={`px-2.5 py-1 rounded border text-[10px] font-bold transition-all cursor-pointer shrink-0 ${
+                  searchQuery.toLowerCase() === item.query.toLowerCase()
+                    ? 'bg-emerald-500 text-black border-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]'
                     : 'bg-emerald-950/60 border-emerald-900 text-emerald-400 hover:border-emerald-500'
                 }`}
               >
-                {c}
+                {item.label}
               </button>
             ))}
           </div>
@@ -209,7 +218,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
               );
             })
           ) : (
-            <div className="text-center py-4 text-xs text-emerald-700">Searching global geography...</div>
+            <div className="text-center py-4 text-xs text-emerald-700">Searching international geography...</div>
           )}
         </div>
 
@@ -218,7 +227,7 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
           <div className="flex items-center gap-2">
             <span className="text-xl">{selectedLocation.flag}</span>
             <div>
-              <div className="font-bold text-emerald-300">{selectedLocation.name}</div>
+              <div className="font-bold text-emerald-300">{selectedLocation.name} ({selectedLocation.country})</div>
               <div className="text-[10px] text-emerald-600">{selectedLocation.lat.toFixed(2)}°N, {selectedLocation.lng.toFixed(2)}°E</div>
             </div>
           </div>
