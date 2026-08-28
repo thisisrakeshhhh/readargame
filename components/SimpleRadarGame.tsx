@@ -40,6 +40,12 @@ export const SimpleRadarGame: React.FC = () => {
     }
   };
 
+  const handleManualStrike = () => {
+    if ((window as any).__manualStrike) {
+      (window as any).__manualStrike();
+    }
+  };
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-mono">
       {screen === 'START' ? (
@@ -74,6 +80,7 @@ export const SimpleRadarGame: React.FC = () => {
             onToggleAutoIntercept={() => setAutoIntercept((p) => !p)}
             onToggleMute={handleToggleMute}
             onInterceptTarget={handleInterceptTarget}
+            onManualStrike={handleManualStrike}
             onDeselectTarget={() => setSelectedTarget(null)}
             onReturnToStart={() => setScreen('START')}
           />
