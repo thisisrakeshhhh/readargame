@@ -134,10 +134,15 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
           </div>
         </div>
 
-        {/* Center: Radar Status */}
-        <div className="flex items-center gap-2 text-[10px] text-emerald-500">
-          <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-          <span>SCANNING ACTIVE</span>
+        {/* Center: Radar Status & Spacebar hint */}
+        <div className="flex items-center gap-3 text-[10px]">
+          <div className="flex items-center gap-1.5 text-emerald-500">
+            <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
+            <span>SCANNING ACTIVE</span>
+          </div>
+          <span className="hidden md:inline px-2 py-0.5 rounded bg-zinc-900 border border-emerald-900/60 text-emerald-400 font-mono text-[9px]">
+            [ SPACEBAR: MANUAL STRIKE ]
+          </span>
         </div>
 
         {/* Right: Auto Intercept Toggle */}
