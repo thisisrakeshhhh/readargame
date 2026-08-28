@@ -42,3 +42,22 @@ body {
 .animate-spin-slow {
   animation: spinSlow 12s linear infinite;
 }
+
+/* Tactical Dark Leaflet Map */
+.tactical-dark-tile {
+  filter: invert(100%) hue-rotate(180deg) brightness(70%) contrast(130%) saturate(15%) !important;
+}
+
+.leaflet-container {
+  background-color: #05080c !important;
+}
+
+.leaflet-control-attribution {
+  background: rgba(0, 0, 0, 0.6) !important;
+  color: #4b5563 !important;
+  font-size: 9px !important;
+}
+
+.leaflet-control-attribution a {
+  color: #6b7280 !important;
+}

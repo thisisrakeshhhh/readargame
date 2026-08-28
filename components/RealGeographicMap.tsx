@@ -9,7 +9,7 @@ interface RealGeographicMapProps {
   radarRangeKm: number;
 }
 
-export const RealGeographicMap: React.FC<RealGeographicMapProps> = ({ location, radarRangeKm }) => {
+export const RealGeographicMap: React.FC<RealGeographicMapProps> = ({ location }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.CircleMarker | null>(null);
@@ -24,14 +24,14 @@ export const RealGeographicMap: React.FC<RealGeographicMapProps> = ({ location, 
       const Leaflet = leafletModule.default || leafletModule;
       if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-      // Determine initial regional zoom based on theater size
+      // Regional tactical zoom (showing city, surrounding state/region, borders, roads)
       const initialZoom = 9;
 
       map = Leaflet.map(mapContainerRef.current, {
         center: [location.lat, location.lng],
         zoom: initialZoom,
         zoomControl: false,
-        attributionControl: false,
+        attributionControl: true,
         dragging: false,
         scrollWheelZoom: false,
         doubleClickZoom: false,
@@ -39,10 +39,11 @@ export const RealGeographicMap: React.FC<RealGeographicMapProps> = ({ location, 
         keyboard: false,
       });
 
-      // Dark Tactical Tiles (CartoDB Dark Matter)
-      Leaflet.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd',
+      // Public OpenStreetMap Tiles with Tactical Dark Filter (No API Key Required!)
+      Leaflet.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        className: 'tactical-dark-tile',
       }).addTo(map);
 
       // Tactical Base Center Marker (Bright green glowing radar base)
@@ -84,8 +85,7 @@ export const RealGeographicMap: React.FC<RealGeographicMapProps> = ({ location, 
   return (
     <div
       ref={mapContainerRef}
-      className="absolute inset-0 w-full h-full z-0 bg-[#070a0e] pointer-events-none select-none opacity-85"
-      style={{ filter: 'brightness(0.9) contrast(1.15)' }}
+      className="absolute inset-0 w-full h-full z-0 bg-[#05080c] pointer-events-none select-none"
     />
   );
 };
