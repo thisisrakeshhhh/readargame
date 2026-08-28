@@ -257,6 +257,24 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
 
       </div>
 
+      {/* Mandatory AdSense & Legal Compliance Navigation */}
+      <footer className="mt-6 z-10 text-center space-y-2 text-xs text-zinc-500">
+        <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px]">
+          <a href="/privacy" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Privacy Policy</a>
+          <span className="text-zinc-700">|</span>
+          <a href="/terms" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Terms of Service</a>
+          <span className="text-zinc-700">|</span>
+          <a href="/guide" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Field Manual</a>
+          <span className="text-zinc-700">|</span>
+          <a href="/about" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">About</a>
+          <span className="text-zinc-700">|</span>
+          <a href="/contact" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Contact</a>
+        </div>
+        <p className="text-[10px] text-zinc-600">
+          &copy; {new Date().getFullYear()} Readar Tactical Operations. Real-time airspace simulation.
+        </p>
+      </footer>
+
     </div>
   );
 };
