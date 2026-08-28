@@ -4,9 +4,12 @@ import React, { useRef, useEffect } from 'react';
 import { GeoLocation } from '../types/tactical';
 import { audioEngine } from './AudioEngine';
 
+export type TargetCategory = 'MISSILE' | 'UAV' | 'DRONE' | 'JET' | 'TANK' | 'BOMBER' | 'HELICOPTER';
+
 export interface Target2D {
   id: string;
   callsign: string;
+  category: TargetCategory;
   type: 'HOSTILE' | 'UNKNOWN' | 'FRIENDLY';
   x: number; // Offset in px relative to radar center
   y: number;
@@ -16,6 +19,7 @@ export interface Target2D {
   distanceKm: number;
   status: 'UNKNOWN' | 'SCANNING' | 'HOSTILE';
   aiState: 'OUTSIDE' | 'DETECTED' | 'TRACKING' | 'LOCKED' | 'INTERCEPTING' | 'DESTROYED';
+  isScanned: boolean; // Must be true before striking
   isIntercepting: boolean;
   scanPulse: number; // 0 to 1
   lastScannedAngle: number;
@@ -88,7 +92,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       targetId: target.id,
       x: 0,
       y: 0,
-      speedPxS: 240, // High-speed interceptor missile
+      speedPxS: 250, // High-speed interceptor
       trail: [[0, 0]],
     });
 
@@ -120,7 +124,15 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
     resize();
     window.addEventListener('resize', resize);
 
-    const callsignLetters = ['A', 'B', 'X', 'K', 'V', 'Z', 'C', 'D', 'R', 'T'];
+    const categories: { category: TargetCategory; prefix: string; baseSpeed: number }[] = [
+      { category: 'MISSILE', prefix: 'MSL', baseSpeed: 38 },
+      { category: 'JET', prefix: 'JET', baseSpeed: 28 },
+      { category: 'UAV', prefix: 'UAV', baseSpeed: 20 },
+      { category: 'DRONE', prefix: 'DRN', baseSpeed: 18 },
+      { category: 'TANK', prefix: 'TNK', baseSpeed: 12 },
+      { category: 'BOMBER', prefix: 'BMB', baseSpeed: 19 },
+      { category: 'HELICOPTER', prefix: 'HELI', baseSpeed: 15 },
+    ];
 
     // Target Spawner Helper
     const spawnTarget = () => {
@@ -128,33 +140,36 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       const h = canvas.height;
       const radarRadius = Math.min(w, h) * 0.32;
 
-      // Spawn 0.8x to 1.5x radar radius away
+      // Spawn around outer radar perimeter (0.85x to 1.5x radius)
       const angle = Math.random() * Math.PI * 2;
-      const dist = radarRadius * (0.8 + Math.random() * 0.7);
+      const dist = radarRadius * (0.85 + Math.random() * 0.65);
       const spawnX = Math.cos(angle) * dist;
       const spawnY = Math.sin(angle) * dist;
 
-      // Aim towards base center with slight angular lead
-      const speed = 22 + Math.random() * 26; // px/sec
-      const targetAngle = angle + Math.PI + (Math.random() - 0.5) * 0.3;
+      // Pick random military category
+      const catConfig = categories[Math.floor(Math.random() * categories.length)];
+      const speed = catConfig.baseSpeed + (Math.random() - 0.5) * 6; // px/sec
+      const targetAngle = angle + Math.PI + (Math.random() - 0.5) * 0.25;
       const vx = Math.cos(targetAngle) * speed;
       const vy = Math.sin(targetAngle) * speed;
 
       const idNum = Math.floor(10 + Math.random() * 89);
-      const letter = callsignLetters[Math.floor(Math.random() * callsignLetters.length)];
+      const callsign = `${catConfig.prefix}-${idNum}`;
 
       const newTarget: Target2D = {
         id: `target-${Date.now()}-${Math.random()}`,
-        callsign: `${letter}-${idNum}`,
+        callsign,
+        category: catConfig.category,
         type: 'HOSTILE',
         x: spawnX,
         y: spawnY,
         vx,
         vy,
-        speedKmS: parseFloat(((speed / 10) * 1.2).toFixed(1)),
+        speedKmS: parseFloat(((speed / 10) * 1.3).toFixed(1)),
         distanceKm: Math.round((dist / radarRadius) * radarRangeKm),
-        status: dist <= radarRadius ? 'HOSTILE' : 'UNKNOWN',
-        aiState: dist <= radarRadius ? 'DETECTED' : 'OUTSIDE',
+        status: 'UNKNOWN',
+        aiState: 'OUTSIDE',
+        isScanned: false,
         isIntercepting: false,
         scanPulse: 0,
         lastScannedAngle: -999,
@@ -164,7 +179,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       targetsRef.current.push(newTarget);
     };
 
-    // Pre-populate with initial targets
+    // Pre-populate with diverse targets
     targetsRef.current = [];
     interceptorsRef.current = [];
     explosionsRef.current = [];
@@ -186,41 +201,41 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       const radarRadius = Math.min(w, h) * 0.32; // 50-65% of viewport
 
       // 1. UPDATE RADAR SWEEP (Smooth 60 FPS Rotation)
-      sweepAngleRef.current = (sweepAngleRef.current + 1.4 * deltaTime) % (Math.PI * 2);
+      sweepAngleRef.current = (sweepAngleRef.current + 1.35 * deltaTime) % (Math.PI * 2);
       const sweepAngle = sweepAngleRef.current;
 
       // 2. PERIODIC TARGET SPAWNING (Maintains 4-7 active threats continuously)
       spawnTimer += deltaTime;
-      if (spawnTimer > 3.8 && targetsRef.current.length < 7) {
+      if (spawnTimer > 3.6 && targetsRef.current.length < 7) {
         spawnTimer = 0;
         spawnTarget();
       }
 
-      // 3. AUTO INTERCEPT AI (Strikes ALL hostile targets entering radar)
+      // 3. FIRST SCAN, THEN STRIKE AI LOGIC
       if (autoInterceptRef.current) {
         autoAiTimer += deltaTime;
-        if (autoAiTimer > 0.3) { // Fast AI evaluation tick
+        if (autoAiTimer > 0.25) { // Fast AI evaluation tick
           autoAiTimer = 0;
 
-          // Find ALL hostile targets inside radar range without active interceptor
-          const unattackedTargets = targetsRef.current.filter((t) => {
+          // Target must be SCANNED by the radar sweep before launching a strike!
+          const targetsToStrike = targetsRef.current.filter((t) => {
             const d = Math.hypot(t.x, t.y);
             return (
-              (t.status === 'HOSTILE' || d <= radarRadius * 0.98) &&
+              t.isScanned &&
+              t.status === 'HOSTILE' &&
               d <= radarRadius * 0.98 &&
               !t.isIntercepting
             );
           });
 
-          // Launch interceptors against unattacked targets
-          unattackedTargets.forEach((targetToEngage) => {
-            targetToEngage.status = 'HOSTILE';
+          // Launch interceptor strikes against scanned threats
+          targetsToStrike.forEach((targetToEngage) => {
             launchInterceptorAt(targetToEngage);
           });
         }
       }
 
-      // 4. UPDATE TARGETS PHYSICS & DETECTION
+      // 4. UPDATE TARGETS PHYSICS & RADAR SWEEP DETECTION
       const activeTargets: Target2D[] = [];
       for (let i = 0; i < targetsRef.current.length; i++) {
         const t = targetsRef.current[i];
@@ -239,18 +254,12 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
 
         // Pulse decay
         if (t.scanPulse > 0) {
-          t.scanPulse = Math.max(0, t.scanPulse - 1.6 * deltaTime);
+          t.scanPulse = Math.max(0, t.scanPulse - 1.5 * deltaTime);
         }
 
         const inRadar = distFromCenter <= radarRadius;
 
-        // Auto-classify immediately once inside radar perimeter
-        if (inRadar && t.status !== 'HOSTILE') {
-          t.status = 'HOSTILE';
-          t.aiState = 'DETECTED';
-        }
-
-        // Sweep crossing pulse & audio ping
+        // SWEEP CROSSING DETECTION (FIRST SCAN!)
         let targetAngle = Math.atan2(t.y, t.x);
         if (targetAngle < 0) targetAngle += Math.PI * 2;
 
@@ -259,8 +268,18 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
           if (Math.abs(sweepAngle - t.lastScannedAngle) > 0.4) {
             t.lastScannedAngle = sweepAngle;
             t.scanPulse = 1.0;
+            t.isScanned = true; // SCANNED!
+            t.status = 'HOSTILE';
+            t.aiState = 'LOCKED';
             audioEngine.playRadarPing();
           }
+        }
+
+        // Proximity emergency scan if target gets dangerously close (<45% radius)
+        if (distFromCenter < radarRadius * 0.45 && !t.isScanned) {
+          t.isScanned = true;
+          t.status = 'HOSTILE';
+          t.aiState = 'LOCKED';
         }
 
         // Base Impact
@@ -271,7 +290,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
             x: t.x,
             y: t.y,
             radius: 5,
-            maxRadius: 30,
+            maxRadius: 32,
             progress: 0,
             color: '#ef4444',
           });
@@ -285,18 +304,16 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       }
       targetsRef.current = activeTargets;
 
-      // 5. UPDATE INTERCEPTORS FLIGHT & CONTINUOUS HOMING
+      // 5. UPDATE INTERCEPTORS FLIGHT & HOMING
       const activeInterceptors: Interceptor2D[] = [];
       for (let i = 0; i < interceptorsRef.current.length; i++) {
         const int = interceptorsRef.current[i];
         const target = targetsRef.current.find((t) => t.id === int.targetId);
 
         if (!target) {
-          // Target already destroyed
           continue;
         }
 
-        // Homing calculation
         const dx = target.x - int.x;
         const dy = target.y - int.y;
         const distToTarget = Math.hypot(dx, dy);
@@ -322,7 +339,6 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
             onSelectTargetRef.current(null);
           }
         } else {
-          // Move towards target
           const moveStep = int.speedPxS * deltaTime;
           int.x += (dx / distToTarget) * moveStep;
           int.y += (dy / distToTarget) * moveStep;
@@ -344,14 +360,12 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       // CANVAS RENDERING
       // ==========================================
 
-      // Clear Canvas (Transparent for Leaflet Map background)
       ctx.clearRect(0, 0, w, h);
 
       ctx.save();
       ctx.translate(cx, cy);
 
       // 7. DRAW TACTICAL RADAR OVERLAY
-      // Radar Outer Boundary Glow
       ctx.shadowColor = '#22c55e';
       ctx.shadowBlur = 8;
       ctx.strokeStyle = '#22c55e';
@@ -361,7 +375,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      // Radar Range Rings
+      // Range Rings
       ctx.strokeStyle = 'rgba(34, 197, 94, 0.45)';
       ctx.lineWidth = 1;
       const ringSteps = [0.25, 0.5, 0.75, 1.0];
@@ -413,13 +427,13 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       ctx.shadowBlur = 0;
       ctx.restore();
 
-      // 8. DRAW TARGETS (Red Crosses & Tactical Blips)
+      // 8. DRAW TARGETS (Custom icons for MISSILE, JET, UAV, DRONE, TANK, BOMBER, HELICOPTER)
       targetsRef.current.forEach((t) => {
         const isSelected = selectedTargetIdRef.current === t.id;
 
         // Trail Line
         if (t.trail.length > 1) {
-          ctx.strokeStyle = t.status === 'HOSTILE' ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.25)';
+          ctx.strokeStyle = t.isScanned ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.25)';
           ctx.lineWidth = 1;
           ctx.setLineDash([2, 3]);
           ctx.beginPath();
@@ -431,55 +445,106 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
           ctx.setLineDash([]);
         }
 
-        // Pulse Ring
+        // Pulse Ring on Scan
         if (t.scanPulse > 0) {
-          ctx.strokeStyle = `rgba(34, 197, 94, ${t.scanPulse * 0.8})`;
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = `rgba(34, 197, 94, ${t.scanPulse * 0.9})`;
+          ctx.lineWidth = 1.8;
           ctx.beginPath();
-          ctx.arc(t.x, t.y, 6 + (1 - t.scanPulse) * 10, 0, Math.PI * 2);
+          ctx.arc(t.x, t.y, 6 + (1 - t.scanPulse) * 12, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Marker
-        if (t.status === 'HOSTILE') {
-          // Crisp Red Cross ×
+        if (t.isScanned) {
+          // SCANNED HOSTILE TARGET — Render Category Tactical Icon
           ctx.strokeStyle = '#ef4444';
-          ctx.lineWidth = isSelected ? 2.5 : 2.0;
-          ctx.beginPath();
-          ctx.moveTo(t.x - 4, t.y - 4);
-          ctx.lineTo(t.x + 4, t.y + 4);
-          ctx.moveTo(t.x + 4, t.y - 4);
-          ctx.lineTo(t.x - 4, t.y + 4);
-          ctx.stroke();
+          ctx.fillStyle = '#ef4444';
+          ctx.lineWidth = isSelected ? 2.5 : 1.8;
 
-          // Tiny Label
+          if (t.category === 'MISSILE') {
+            // Sharp chevron / needle ▲
+            ctx.beginPath();
+            ctx.moveTo(t.x, t.y - 6);
+            ctx.lineTo(t.x - 4, t.y + 4);
+            ctx.lineTo(t.x, t.y + 2);
+            ctx.lineTo(t.x + 4, t.y + 4);
+            ctx.closePath();
+            ctx.stroke();
+          } else if (t.category === 'JET') {
+            // Swept fighter jet ✈
+            ctx.beginPath();
+            ctx.moveTo(t.x, t.y - 5);
+            ctx.lineTo(t.x - 5, t.y + 1);
+            ctx.lineTo(t.x - 2, t.y + 3);
+            ctx.lineTo(t.x - 3, t.y + 5);
+            ctx.lineTo(t.x, t.y + 4);
+            ctx.lineTo(t.x + 3, t.y + 5);
+            ctx.lineTo(t.x + 2, t.y + 3);
+            ctx.lineTo(t.x + 5, t.y + 1);
+            ctx.closePath();
+            ctx.stroke();
+          } else if (t.category === 'UAV' || t.category === 'DRONE') {
+            // Tactical diamond ◇ with center blip
+            ctx.beginPath();
+            ctx.moveTo(t.x, t.y - 5);
+            ctx.lineTo(t.x + 5, t.y);
+            ctx.lineTo(t.x, t.y + 5);
+            ctx.lineTo(t.x - 5, t.y);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fillRect(t.x - 1, t.y - 1, 2, 2);
+          } else if (t.category === 'TANK') {
+            // Armored square ■ with barrel
+            ctx.strokeRect(t.x - 4, t.y - 3, 8, 6);
+            ctx.beginPath();
+            ctx.moveTo(t.x, t.y - 3);
+            ctx.lineTo(t.x, t.y - 6);
+            ctx.stroke();
+          } else if (t.category === 'BOMBER') {
+            // Heavy delta wing
+            ctx.beginPath();
+            ctx.moveTo(t.x, t.y - 5);
+            ctx.lineTo(t.x - 7, t.y + 4);
+            ctx.lineTo(t.x + 7, t.y + 4);
+            ctx.closePath();
+            ctx.stroke();
+          } else {
+            // Crisp Red Cross ×
+            ctx.beginPath();
+            ctx.moveTo(t.x - 4, t.y - 4);
+            ctx.lineTo(t.x + 4, t.y + 4);
+            ctx.moveTo(t.x + 4, t.y - 4);
+            ctx.lineTo(t.x - 4, t.y + 4);
+            ctx.stroke();
+          }
+
+          // Category + Callsign Label
           ctx.fillStyle = '#f87171';
-          ctx.font = '10px monospace';
-          ctx.fillText(t.callsign, t.x + 6, t.y - 3);
+          ctx.font = '9px monospace';
+          ctx.fillText(`${t.callsign}`, t.x + 7, t.y - 2);
         } else {
-          // Amber Dot ●
+          // UNSCANNED (Amber Dot Blip)
           ctx.fillStyle = '#f59e0b';
           ctx.beginPath();
-          ctx.arc(t.x, t.y, 3, 0, Math.PI * 2);
+          ctx.arc(t.x, t.y, 2.5, 0, Math.PI * 2);
           ctx.fill();
 
           ctx.fillStyle = '#fbbf24';
-          ctx.font = '9px monospace';
-          ctx.fillText(t.callsign, t.x + 5, t.y - 2);
+          ctx.font = '8px monospace';
+          ctx.fillText('UNK', t.x + 5, t.y - 2);
         }
 
-        // Highlight Lock Box
+        // Highlight Lock Box if selected
         if (isSelected) {
           ctx.strokeStyle = '#38bdf8';
           ctx.lineWidth = 1.5;
-          ctx.strokeRect(t.x - 8, t.y - 8, 16, 16);
+          ctx.strokeRect(t.x - 9, t.y - 9, 18, 18);
         }
       });
 
-      // 9. DRAW INTERCEPTORS (Luminous Cyan Strike Line + Projectile Head)
+      // 9. DRAW INTERCEPTOR STRIKES
       interceptorsRef.current.forEach((int) => {
         // Strike Beam from Base to Missile Head
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(0, 0);

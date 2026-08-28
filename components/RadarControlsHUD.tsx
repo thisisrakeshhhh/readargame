@@ -96,8 +96,8 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
           </div>
 
           <div className="grid grid-cols-2 gap-1.5 text-[10px] text-red-200">
-            <div>STATUS: <strong className="text-red-400">{selectedTarget.status}</strong></div>
-            <div>TYPE: <strong className="text-white">{selectedTarget.type}</strong></div>
+            <div>STATUS: <strong className="text-red-400">{selectedTarget.isScanned ? selectedTarget.status : 'UNSCANNED'}</strong></div>
+            <div>UNIT: <strong className="text-amber-300 font-bold">{selectedTarget.category}</strong></div>
             <div>SPEED: <strong className="text-white">{selectedTarget.speedKmS} KM/S</strong></div>
             <div>DISTANCE: <strong className="text-amber-300">{selectedTarget.distanceKm} KM</strong></div>
           </div>
