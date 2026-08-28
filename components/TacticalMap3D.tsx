@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import * as THREE from 'three';
 import {
   GeoLocation,
@@ -9,6 +9,7 @@ import {
   Explosion3D,
   RadarRange,
   GameView,
+  WeaponSystem,
 } from '../types/tactical';
 import {
   GLOBE_RADIUS,
@@ -19,19 +20,25 @@ import {
   createAtmosphereMesh,
   createStarfield,
 } from '../utils/threeTactical';
+import { audioEngine } from './AudioEngine';
+
+export interface TacticalMap3DHandle {
+  spawnContact: (contact: TacticalContact) => void;
+  launchMissile: (missile: TacticalMissile) => void;
+  steerManualMissile: (missileId: string, headingDelta: number) => void;
+  detonateManualMissile: (missileId: string) => void;
+}
 
 interface TacticalMap3DProps {
   location: GeoLocation;
   gameView: GameView;
   radarRange: RadarRange;
-  contacts: TacticalContact[];
-  missiles: TacticalMissile[];
-  explosions: Explosion3D[];
-  selectedContact: TacticalContact | null;
-  trackedContactId: string | null;
-  onSelectContact: (contact: TacticalContact) => void;
+  selectedContactId: string | null;
+  onSelectContact: (contact: TacticalContact | null) => void;
+  onContactDetected: (contact: TacticalContact) => void;
+  onContactClassified: (contact: TacticalContact) => void;
   onContactImpact: (contact: TacticalContact) => void;
-  onMissileDetonated: (missile: TacticalMissile, hitContact: TacticalContact | null) => void;
+  onMissileIntercept: (missile: TacticalMissile, hitContact: TacticalContact) => void;
   onTransitionComplete?: () => void;
 }
 
@@ -40,26 +47,23 @@ const MAX_MISSILE_POOL = 10;
 const MAX_EXPLOSION_POOL = 10;
 const MAX_TRAIL_POINTS = 40;
 
-// Texture cache to prevent repeated canvas generation
 const mapTextureCache: Record<string, THREE.CanvasTexture> = {};
 
-export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
+export const TacticalMap3D = forwardRef<TacticalMap3DHandle, TacticalMap3DProps>(({
   location,
   gameView,
   radarRange,
-  contacts,
-  missiles,
-  explosions,
-  selectedContact,
-  trackedContactId,
+  selectedContactId,
   onSelectContact,
+  onContactDetected,
+  onContactClassified,
   onContactImpact,
-  onMissileDetonated,
+  onMissileIntercept,
   onTransitionComplete,
-}) => {
+}, ref) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
-  // 1. STABLE REFS FOR ALL INCOMING PROPS & CALLBACKS (Prevents any Three.js reconstruction)
+  // STABLE REFS FOR PROPS & EVENT CALLBACKS
   const locationRef = useRef(location);
   locationRef.current = location;
 
@@ -69,50 +73,72 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
   const radarRangeRef = useRef(radarRange);
   radarRangeRef.current = radarRange;
 
-  const contactsRef = useRef(contacts);
-  contactsRef.current = contacts;
-
-  const missilesRef = useRef(missiles);
-  missilesRef.current = missiles;
-
-  const explosionsRef = useRef(explosions);
-  explosionsRef.current = explosions;
-
-  const selectedContactRef = useRef(selectedContact);
-  selectedContactRef.current = selectedContact;
-
-  const trackedContactIdRef = useRef(trackedContactId);
-  trackedContactIdRef.current = trackedContactId;
+  const selectedContactIdRef = useRef(selectedContactId);
+  selectedContactIdRef.current = selectedContactId;
 
   const onSelectContactRef = useRef(onSelectContact);
   onSelectContactRef.current = onSelectContact;
 
+  const onContactDetectedRef = useRef(onContactDetected);
+  onContactDetectedRef.current = onContactDetected;
+
+  const onContactClassifiedRef = useRef(onContactClassified);
+  onContactClassifiedRef.current = onContactClassified;
+
   const onContactImpactRef = useRef(onContactImpact);
   onContactImpactRef.current = onContactImpact;
 
-  const onMissileDetonatedRef = useRef(onMissileDetonated);
-  onMissileDetonatedRef.current = onMissileDetonated;
+  const onMissileInterceptRef = useRef(onMissileIntercept);
+  onMissileInterceptRef.current = onMissileIntercept;
 
   const onTransitionCompleteRef = useRef(onTransitionComplete);
   onTransitionCompleteRef.current = onTransitionComplete;
 
-  // Camera & Interaction Refs
+  // HIGH-FREQUENCY MUTABLE SIMULATION STATE (OWNED ENTIRELY BY THREE.JS RAF)
+  const simContactsRef = useRef<TacticalContact[]>([]);
+  const simMissilesRef = useRef<TacticalMissile[]>([]);
+  const simExplosionsRef = useRef<Explosion3D[]>([]);
+
+  // Camera Pan & Zoom Refs
   const isDraggingRef = useRef(false);
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
   const cameraPanOffsetRef = useRef({ x: 0, z: 0 });
   const cameraZoomRef = useRef(140);
   const targetCameraZoomRef = useRef(140);
-  const isTransitioningRef = useRef(false);
   const transitionProgressRef = useRef(0);
+  const isTransitioningRef = useRef(false);
 
-  // THREE.JS SCENE INITIALIZATION (RUNS ONCE ON MOUNT)
+  // Expose methods to push game events from React into high-frequency RAF loop
+  useImperativeHandle(ref, () => ({
+    spawnContact: (contact: TacticalContact) => {
+      simContactsRef.current = [...simContactsRef.current.slice(-(MAX_CONTACT_POOL - 1)), contact];
+    },
+    launchMissile: (missile: TacticalMissile) => {
+      simMissilesRef.current = [...simMissilesRef.current.slice(-(MAX_MISSILE_POOL - 1)), missile];
+    },
+    steerManualMissile: (missileId: string, headingDelta: number) => {
+      const m = simMissilesRef.current.find((item) => item.id === missileId);
+      if (m) {
+        m.manualHeadingOffset += headingDelta;
+      }
+    },
+    detonateManualMissile: (missileId: string) => {
+      const idx = simMissilesRef.current.findIndex((item) => item.id === missileId);
+      if (idx !== -1) {
+        const m = simMissilesRef.current[idx];
+        m.flightProgress = 1.0;
+      }
+    },
+  }));
+
+  // THREE.JS SCENE INITIALIZATION & 60 FPS DELTA-TIME RAF SIMULATION LOOP
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
     let isDisposed = false;
 
-    // 1. Create Single Scene, Camera & Renderer
+    // 1. Setup Scene, Camera & WebGL Renderer
     const scene = new THREE.Scene();
 
     const width = container.clientWidth || window.innerWidth;
@@ -129,7 +155,6 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
-    renderer.toneMapping = THREE.NoToneMapping;
     container.appendChild(renderer.domElement);
 
     // 2. Starfield & Lighting
@@ -143,7 +168,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     sunLight.position.set(100, 200, 150);
     scene.add(sunLight);
 
-    // 3. START SCREEN: 3D Earth Globe Group (Low Poly 32x24 for performance)
+    // 3. START SCREEN: 3D Earth Globe Group (Low poly, visible only in Start view)
     const globeGroup = new THREE.Group();
     scene.add(globeGroup);
 
@@ -162,12 +187,11 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     const atmosphere = createAtmosphereMesh();
     globeGroup.add(atmosphere);
 
-    // 4. THEATER GAMEPLAY: Dark Geographic Map Group (75-85% of Viewport)
+    // 4. THEATER GAMEPLAY: Dark Geographic Map (75-85% of Viewport)
     const theaterMapGroup = new THREE.Group();
     theaterMapGroup.visible = false;
     scene.add(theaterMapGroup);
 
-    // Geographic Terrain Plane
     let initialMapTexture = mapTextureCache[locationRef.current.id];
     if (!initialMapTexture) {
       initialMapTexture = generateRegionalTacticalMapTexture(locationRef.current);
@@ -217,6 +241,17 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       ringMeshes.push(rMesh);
     });
 
+    // 8 Bearing Radial Lines (thin, subtle)
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0.23, 0),
+        new THREE.Vector3(Math.cos(a) * radarBaseRadius, 0.23, Math.sin(a) * radarBaseRadius),
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x34d399, transparent: true, opacity: 0.12 });
+      const bLine = new THREE.Line(lineGeom, lineMat);
+      radarOverlayGroup.add(bLine);
+    }
+
     // Small rotating sweep wedge
     const sweepGeom = new THREE.CircleGeometry(radarBaseRadius, 24, 0, Math.PI / 5);
     const sweepMat = new THREE.MeshBasicMaterial({
@@ -230,7 +265,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     sweepMesh.position.set(0, 0.22, 0);
     radarOverlayGroup.add(sweepMesh);
 
-    // 6. PRE-ALLOCATED CONTACTS OBJECT POOL (ZERO PER-FRAME ALLOCATIONS)
+    // 6. PRE-ALLOCATED CONTACTS POOL
     const contactsGroup = new THREE.Group();
     theaterMapGroup.add(contactsGroup);
 
@@ -254,7 +289,6 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       contactsGroup.add(mesh);
       contactMeshes.push(mesh);
 
-      // Pre-allocated Line Buffer for trajectories (max 40 points)
       const linePositions = new Float32Array(MAX_TRAIL_POINTS * 3);
       const lineGeom = new THREE.BufferGeometry();
       lineGeom.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
@@ -315,7 +349,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       explosionMeshes.push(mesh);
     }
 
-    // 9. MOUSE PAN / ZOOM HANDLERS (Direct event-based, Zero React re-renders)
+    // 9. MOUSE PAN / ZOOM HANDLERS
     const handleMouseDown = (e: MouseEvent) => {
       isDraggingRef.current = true;
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
@@ -343,7 +377,6 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       targetCameraZoomRef.current = Math.max(60, Math.min(240, targetCameraZoomRef.current + e.deltaY * 0.15));
     };
 
-    // Raycast contact selection
     const handleClick = (e: MouseEvent) => {
       if (!container || gameViewRef.current !== 'THEATER') return;
       const rect = container.getBoundingClientRect();
@@ -362,7 +395,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
         const hit = intersects[0].object;
         const cid = hit.userData?.contactId;
         if (cid) {
-          const found = contactsRef.current.find((c) => c.id === cid);
+          const found = simContactsRef.current.find((c) => c.id === cid);
           if (found) {
             onSelectContactRef.current(found);
           }
@@ -387,21 +420,28 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     };
     window.addEventListener('resize', handleResize);
 
-    // 10. SINGLE REQUEST-ANIMATION-FRAME LOOP (ZERO ALLOCATIONS)
+    // 10. REAL-TIME 60 FPS DELTA-TIME SIMULATION & RENDER LOOP
     let animId: number;
+    let previousTime = performance.now();
     let sweepAngle = 0;
 
-    const animate = () => {
+    const animate = (currentTime: number) => {
       if (isDisposed) return;
       animId = requestAnimationFrame(animate);
 
-      // Pause high-frequency rendering when tab is hidden
-      if (document.hidden) return;
+      if (document.hidden) {
+        previousTime = currentTime;
+        return;
+      }
+
+      // Delta time in seconds (clamped to prevent huge jumps)
+      const deltaTime = Math.min(0.1, (currentTime - previousTime) / 1000);
+      previousTime = currentTime;
 
       const currentView = gameViewRef.current;
       const loc = locationRef.current;
+      const currentRadarRange = radarRangeRef.current;
 
-      // Smooth zoom damping
       cameraZoomRef.current += (targetCameraZoomRef.current - cameraZoomRef.current) * 0.08;
 
       if (currentView === 'START') {
@@ -409,7 +449,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
         theaterMapGroup.visible = false;
         starfield.visible = true;
 
-        globeMesh.rotation.y += 0.001;
+        globeMesh.rotation.y += 0.8 * deltaTime;
         camera.position.set(0, 60, cameraZoomRef.current);
         camera.lookAt(0, 0, 0);
       } else if (currentView === 'TRANSITION') {
@@ -417,7 +457,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
         theaterMapGroup.visible = true;
         starfield.visible = true;
 
-        transitionProgressRef.current += 0.02;
+        transitionProgressRef.current += 0.8 * deltaTime;
         const p = Math.min(1.0, transitionProgressRef.current);
 
         camera.position.set(0, THREE.MathUtils.lerp(60, 135, p), THREE.MathUtils.lerp(300, 70, p));
@@ -440,37 +480,190 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
         camera.position.set(pan.x, zoom, pan.z + zoom * 0.45);
         camera.lookAt(pan.x, 0, pan.z);
 
-        // Update Radar Sweep
-        sweepAngle = (sweepAngle + 0.035) % (Math.PI * 2);
+        // CONTINUOUS ROTATING RADAR SWEEP
+        sweepAngle = (sweepAngle + 1.8 * deltaTime) % (Math.PI * 2);
         sweepMesh.rotation.z = sweepAngle;
 
-        // Scale Radar Overlay based on current range
-        const rangeFraction = radarRangeRef.current / 500;
-        const activeRadarRadius = rangeFraction * 24;
+        const rangeFraction = currentRadarRange / 500;
         sweepMesh.scale.set(rangeFraction, rangeFraction, 1);
         ringMeshes.forEach((rm, i) => {
-          rm.visible = (i + 1) * 125 <= radarRangeRef.current + 25;
+          rm.visible = (i + 1) * 125 <= currentRadarRange + 25;
         });
 
-        // 11. UPDATE CONTACTS POOL IN-PLACE (ZERO ALLOCATIONS)
-        const currentContacts = contactsRef.current;
-        const selectedC = selectedContactRef.current;
+        // 11. CONTINUOUS 60 FPS CONTACTS PHYSICS & DETECTION
+        const liveContacts = simContactsRef.current;
+        const survivingContacts: TacticalContact[] = [];
+
+        for (let i = 0; i < liveContacts.length; i++) {
+          const c = liveContacts[i];
+
+          // Continuous delta-time movement towards base
+          const dLat = (loc.lat - c.lat);
+          const dLng = (loc.lng - c.lng);
+          const distDeg = Math.sqrt(dLat * dLat + dLng * dLng);
+
+          // Unit direction vector
+          const dirLat = distDeg > 0.001 ? dLat / distDeg : 0;
+          const dirLng = distDeg > 0.001 ? dLng / distDeg : 0;
+
+          // Speed in degrees per second (velocityKmS / 111)
+          const speedDegS = (c.velocityKmS / 111) * 0.4;
+          const newLat = c.lat + dirLat * speedDegS * deltaTime;
+          const newLng = c.lng + dirLng * speedDegS * deltaTime;
+          const newAlt = Math.max(0.5, c.altKm - 0.2 * deltaTime);
+
+          const distKm = distDeg * 111;
+          const inRadar = distKm <= currentRadarRange;
+
+          let status = c.status;
+          let progress = c.classificationProgress;
+
+          // Continuous radar detection & classification
+          if (inRadar) {
+            if (status === 'UNKNOWN') {
+              status = 'CLASSIFYING';
+              audioEngine.playRadarPing();
+              onContactDetectedRef.current(c);
+            } else if (status === 'CLASSIFYING') {
+              progress += 30 * deltaTime;
+              if (progress >= 100) {
+                status = 'HOSTILE';
+                onContactClassifiedRef.current(c);
+              }
+            }
+          }
+
+          // Check Base Impact
+          if (distDeg < 0.18) {
+            audioEngine.playExplosion();
+            onContactImpactRef.current(c);
+
+            // Spawn explosion in mutable pool
+            simExplosionsRef.current = [
+              ...simExplosionsRef.current.slice(-(MAX_EXPLOSION_POOL - 1)),
+              {
+                id: `exp-${Date.now()}`,
+                lat: newLat,
+                lng: newLng,
+                altKm: 0.5,
+                radiusKm: 12,
+                maxRadiusKm: 12,
+                durationSec: 1.8,
+                elapsedSec: 0,
+                color: '#ef4444',
+              },
+            ];
+          } else {
+            // Trajectory points update (capped at MAX_TRAIL_POINTS)
+            const boundedTrajectory: [number, number, number][] = [
+              ...c.trajectoryPoints.slice(-(MAX_TRAIL_POINTS - 1)),
+              [newLat, newLng, newAlt],
+            ];
+
+            survivingContacts.push({
+              ...c,
+              lat: newLat,
+              lng: newLng,
+              altKm: newAlt,
+              status,
+              classificationProgress: progress,
+              trajectoryPoints: boundedTrajectory,
+              etaSeconds: Math.max(1, distKm / Math.max(1, c.velocityKmS * 3.6)),
+            });
+          }
+        }
+        simContactsRef.current = survivingContacts;
+
+        // 12. CONTINUOUS 60 FPS MISSILES GUIDANCE & INTERCEPT
+        const liveMissiles = simMissilesRef.current;
+        const survivingMissiles: TacticalMissile[] = [];
+
+        for (let i = 0; i < liveMissiles.length; i++) {
+          const m = liveMissiles[i];
+          // Continuous flight progress
+          const progressDelta = (m.speedMach * 0.08) * deltaTime;
+          const nextProgress = m.flightProgress + progressDelta;
+
+          const currentLat = m.sourceLat + (m.targetLat - m.sourceLat) * nextProgress;
+          const currentLng = m.sourceLng + (m.targetLng - m.sourceLng) * nextProgress;
+          const currentAlt = Math.sin(nextProgress * Math.PI) * 35;
+
+          if (nextProgress >= 1.0) {
+            // Intercept Detonation!
+            audioEngine.playExplosion();
+
+            // Check hit contact
+            let hitContact: TacticalContact | null = null;
+            simContactsRef.current = simContactsRef.current.filter((c) => {
+              const d = Math.sqrt(Math.pow(c.lat - currentLat, 2) + Math.pow(c.lng - currentLng, 2));
+              if (c.id === m.targetContactId || d < 0.4) {
+                hitContact = c;
+                return false;
+              }
+              return true;
+            });
+
+            if (hitContact) {
+              onMissileInterceptRef.current(m, hitContact);
+            }
+
+            // Spawn explosion shockwave
+            simExplosionsRef.current = [
+              ...simExplosionsRef.current.slice(-(MAX_EXPLOSION_POOL - 1)),
+              {
+                id: `exp-${Date.now()}`,
+                lat: currentLat,
+                lng: currentLng,
+                altKm: currentAlt,
+                radiusKm: 15,
+                maxRadiusKm: 15,
+                durationSec: 1.8,
+                elapsedSec: 0,
+                color: '#10b981',
+              },
+            ];
+          } else {
+            const boundedTrajectory: [number, number, number][] = [
+              ...m.trajectory.slice(-(MAX_TRAIL_POINTS - 1)),
+              [currentLat, currentLng, currentAlt],
+            ];
+
+            survivingMissiles.push({
+              ...m,
+              flightProgress: nextProgress,
+              currentLat,
+              currentLng,
+              currentAltKm: currentAlt,
+              fuelPercent: Math.max(0, 100 - nextProgress * 100),
+              trajectory: boundedTrajectory,
+            });
+          }
+        }
+        simMissilesRef.current = survivingMissiles;
+
+        // 13. CONTINUOUS EXPLOSIONS DECAY
+        simExplosionsRef.current = simExplosionsRef.current
+          .map((e) => ({ ...e, elapsedSec: e.elapsedSec + deltaTime }))
+          .filter((e) => e.elapsedSec < e.durationSec);
+
+        // 14. UPDATE THREE.JS MESHES DIRECTLY IN-PLACE (ZERO ALLOCATIONS)
+        const activeContacts = simContactsRef.current;
+        const selectedCId = selectedContactIdRef.current;
 
         for (let i = 0; i < MAX_CONTACT_POOL; i++) {
           const mesh = contactMeshes[i];
           const lineGeom = contactLineGeoms[i];
           const lineMesh = contactLineMeshes[i];
 
-          if (i < currentContacts.length) {
-            const c = currentContacts[i];
+          if (i < activeContacts.length) {
+            const c = activeContacts[i];
             const p = geoToTheaterMapCoords(c.lat, c.lng, loc.lat, loc.lng);
-            const isSel = selectedC?.id === c.id;
+            const isSel = selectedCId === c.id;
 
             mesh.visible = true;
             mesh.position.set(p.x, 0.4 + (c.altKm > 0 ? c.altKm * 0.08 : 0), p.z);
             mesh.userData = { contactId: c.id };
 
-            // Material & Geometry based on status
             if (c.status === 'UNKNOWN') {
               mesh.material = unknownMat;
               mesh.geometry = contactDiamondGeom;
@@ -485,7 +678,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
               mesh.scale.set(isSel ? 1.4 : 1.0, isSel ? 1.4 : 1.0, 1);
             }
 
-            // Update Trajectory Line in-place
+            // Trajectory Line
             if (c.status === 'HOSTILE' || isSel) {
               lineMesh.visible = true;
               const posAttr = lineGeom.getAttribute('position') as THREE.BufferAttribute;
@@ -496,9 +689,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
                 const tp = geoToTheaterMapCoords(tlat, tlng, loc.lat, loc.lng);
                 posAttr.setXYZ(idx++, tp.x, 0.3 + talt * 0.06, tp.z);
               }
-              // Connect lead to target base
-              posAttr.setXYZ(idx++, 0, 0.3, 0);
-
+              posAttr.setXYZ(idx++, 0, 0.3, 0); // connect to base
               lineGeom.setDrawRange(0, idx);
               posAttr.needsUpdate = true;
             } else {
@@ -510,21 +701,20 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
           }
         }
 
-        // 12. UPDATE MISSILES POOL IN-PLACE
-        const currentMissiles = missilesRef.current;
+        // 15. UPDATE MISSILES POOL IN-PLACE
+        const activeMissiles = simMissilesRef.current;
         for (let i = 0; i < MAX_MISSILE_POOL; i++) {
           const mesh = missileMeshes[i];
           const lineGeom = missileLineGeoms[i];
           const lineMesh = missileLineMeshes[i];
 
-          if (i < currentMissiles.length) {
-            const m = currentMissiles[i];
+          if (i < activeMissiles.length) {
+            const m = activeMissiles[i];
             const p = geoToTheaterMapCoords(m.currentLat, m.currentLng, loc.lat, loc.lng);
 
             mesh.visible = true;
             mesh.position.set(p.x, 0.5 + m.currentAltKm * 0.1, p.z);
 
-            // Update trail line
             lineMesh.visible = true;
             const posAttr = lineGeom.getAttribute('position') as THREE.BufferAttribute;
             const pts = m.trajectory.slice(-MAX_TRAIL_POINTS);
@@ -542,12 +732,12 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
           }
         }
 
-        // 13. UPDATE EXPLOSIONS POOL IN-PLACE
-        const currentExp = explosionsRef.current;
+        // 16. UPDATE EXPLOSIONS POOL IN-PLACE
+        const activeExp = simExplosionsRef.current;
         for (let i = 0; i < MAX_EXPLOSION_POOL; i++) {
           const mesh = explosionMeshes[i];
-          if (i < currentExp.length) {
-            const exp = currentExp[i];
+          if (i < activeExp.length) {
+            const exp = activeExp[i];
             const p = geoToTheaterMapCoords(exp.lat, exp.lng, loc.lat, loc.lng);
             const scale = Math.max(0.2, (exp.elapsedSec / exp.durationSec) * 1.6);
 
@@ -565,9 +755,8 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       renderer.render(scene, camera);
     };
 
-    animate();
+    animId = requestAnimationFrame(animate);
 
-    // CLEANUP ON TRUE UNMOUNT ONLY
     return () => {
       isDisposed = true;
       cancelAnimationFrame(animId);
@@ -584,7 +773,9 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       renderer.dispose();
       scene.clear();
     };
-  }, []); // EMPTY DEPENDENCIES — INITIALIZES ONCE PER MOUNT!
+  }, []);
 
   return <div ref={mountRef} className="w-full h-full absolute inset-0 z-0 cursor-grab active:cursor-grabbing" />;
-};
+});
+
+TacticalMap3D.displayName = 'TacticalMap3D';
