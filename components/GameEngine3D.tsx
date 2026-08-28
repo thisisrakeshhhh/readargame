@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   GeoLocation,
   TacticalContact,
@@ -21,6 +21,8 @@ import { TacticalHud3D } from './TacticalHud3D';
 import { InterceptModal } from './InterceptModal';
 import { ManualCockpitController } from './ManualCockpitController';
 import { audioEngine } from './AudioEngine';
+
+const MAX_TRAJECTORY_POINTS = 40;
 
 export const GameEngine3D: React.FC = () => {
   // Game View State
@@ -200,7 +202,7 @@ export const GameEngine3D: React.FC = () => {
 
         // Wide realistic geographic distribution (spawns 3-8 degrees away ≈ 300-800 km)
         const angle = Math.random() * Math.PI * 2;
-        const distDeg = 3.5 + Math.random() * 5.0;
+        const distDeg = 3.5 + Math.random() * 4.5;
         const spawnLat = selectedLocation.lat + Math.sin(angle) * distDeg;
         const spawnLng = selectedLocation.lng + Math.cos(angle) * distDeg;
 
@@ -229,7 +231,7 @@ export const GameEngine3D: React.FC = () => {
           trajectoryPoints: [[spawnLat, spawnLng, altKm]],
         };
 
-        setContacts((prev) => [...prev, newContact]);
+        setContacts((prev) => [...prev.slice(-25), newContact]);
         addIntelLog('DETECTION', `UNKNOWN CONTACT ${callsign} ON SATELLITE PERIMETER.`);
 
         // Dynamic Mission Creation
@@ -300,7 +302,7 @@ export const GameEngine3D: React.FC = () => {
             addIntelLog('IMPACT', `IMPACT CONFIRMED AT ${selectedLocation.name.toUpperCase()}!`, 'CRITICAL');
 
             setExplosions((prev) => [
-              ...prev,
+              ...prev.slice(-8),
               {
                 id: `exp-${Date.now()}`,
                 lat: newLat,
@@ -314,6 +316,12 @@ export const GameEngine3D: React.FC = () => {
               },
             ]);
           } else {
+            // Memory-capped trajectory
+            const boundedTrajectory = [
+              ...contact.trajectoryPoints.slice(- (MAX_TRAJECTORY_POINTS - 1)),
+              [newLat, newLng, newAlt] as [number, number, number],
+            ];
+
             nextContacts.push({
               ...contact,
               status: nextStatus,
@@ -321,7 +329,7 @@ export const GameEngine3D: React.FC = () => {
               lat: newLat,
               lng: newLng,
               altKm: newAlt,
-              trajectoryPoints: [...contact.trajectoryPoints, [newLat, newLng, newAlt]],
+              trajectoryPoints: boundedTrajectory,
               etaSeconds: Math.max(1, contact.etaSeconds - 1),
             });
           }
@@ -386,7 +394,7 @@ export const GameEngine3D: React.FC = () => {
 
             // Small 3D Explosion shockwave
             setExplosions((prev) => [
-              ...prev,
+              ...prev.slice(-8),
               {
                 id: `exp-${Date.now()}`,
                 lat: currentLat,
@@ -404,6 +412,11 @@ export const GameEngine3D: React.FC = () => {
               setActiveManualMissile(null);
             }
           } else {
+            const boundedTrajectory = [
+              ...m.trajectory.slice(- (MAX_TRAJECTORY_POINTS - 1)),
+              [currentLat, currentLng, currentAlt] as [number, number, number],
+            ];
+
             nextMissiles.push({
               ...m,
               flightProgress: nextProgress,
@@ -411,7 +424,7 @@ export const GameEngine3D: React.FC = () => {
               currentLng,
               currentAltKm: currentAlt,
               fuelPercent: Math.max(0, 100 - nextProgress * 100),
-              trajectory: [...m.trajectory, [currentLat, currentLng, currentAlt]],
+              trajectory: boundedTrajectory,
             });
           }
         }

@@ -13,7 +13,6 @@ import {
 import {
   GLOBE_RADIUS,
   THEATER_MAP_SIZE,
-  latLngToVector3,
   geoToTheaterMapCoords,
   generateRegionalTacticalMapTexture,
   generateTacticalEarthTexture,
@@ -36,6 +35,14 @@ interface TacticalMap3DProps {
   onTransitionComplete?: () => void;
 }
 
+const MAX_CONTACT_POOL = 30;
+const MAX_MISSILE_POOL = 10;
+const MAX_EXPLOSION_POOL = 10;
+const MAX_TRAIL_POINTS = 40;
+
+// Texture cache to prevent repeated canvas generation
+const mapTextureCache: Record<string, THREE.CanvasTexture> = {};
+
 export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
   location,
   gameView,
@@ -52,87 +59,67 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
-  // High-performance mutable simulation state (Zero React re-renders per frame)
-  const contactsRef = useRef<TacticalContact[]>(contacts);
-  contactsRef.current = contacts;
-
-  const missilesRef = useRef<TacticalMissile[]>(missiles);
-  missilesRef.current = missiles;
-
-  const explosionsRef = useRef<Explosion3D[]>(explosions);
-  explosionsRef.current = explosions;
-
-  const locationRef = useRef<GeoLocation>(location);
+  // 1. STABLE REFS FOR ALL INCOMING PROPS & CALLBACKS (Prevents any Three.js reconstruction)
+  const locationRef = useRef(location);
   locationRef.current = location;
 
-  const radarRangeRef = useRef<RadarRange>(radarRange);
+  const gameViewRef = useRef(gameView);
+  gameViewRef.current = gameView;
+
+  const radarRangeRef = useRef(radarRange);
   radarRangeRef.current = radarRange;
 
-  const selectedContactRef = useRef<TacticalContact | null>(selectedContact);
+  const contactsRef = useRef(contacts);
+  contactsRef.current = contacts;
+
+  const missilesRef = useRef(missiles);
+  missilesRef.current = missiles;
+
+  const explosionsRef = useRef(explosions);
+  explosionsRef.current = explosions;
+
+  const selectedContactRef = useRef(selectedContact);
   selectedContactRef.current = selectedContact;
 
-  // Scene & Engine Refs
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const trackedContactIdRef = useRef(trackedContactId);
+  trackedContactIdRef.current = trackedContactId;
 
-  // Camera Pan / Zoom state
+  const onSelectContactRef = useRef(onSelectContact);
+  onSelectContactRef.current = onSelectContact;
+
+  const onContactImpactRef = useRef(onContactImpact);
+  onContactImpactRef.current = onContactImpact;
+
+  const onMissileDetonatedRef = useRef(onMissileDetonated);
+  onMissileDetonatedRef.current = onMissileDetonated;
+
+  const onTransitionCompleteRef = useRef(onTransitionComplete);
+  onTransitionCompleteRef.current = onTransitionComplete;
+
+  // Camera & Interaction Refs
   const isDraggingRef = useRef(false);
-  const isRightClickRef = useRef(false);
   const previousMousePositionRef = useRef({ x: 0, y: 0 });
   const cameraPanOffsetRef = useRef({ x: 0, z: 0 });
-  const cameraZoomRef = useRef(140); // Camera height above theater map
+  const cameraZoomRef = useRef(140);
   const targetCameraZoomRef = useRef(140);
-
-  // Transition state
-  const transitionProgressRef = useRef(0);
   const isTransitioningRef = useRef(false);
+  const transitionProgressRef = useRef(0);
 
-  // Three.js Scene Groups
-  const globeGroupRef = useRef<THREE.Group | null>(null);
-  const theaterMapGroupRef = useRef<THREE.Group | null>(null);
-  const radarOverlayGroupRef = useRef<THREE.Group | null>(null);
-  const contactsGroupRef = useRef<THREE.Group | null>(null);
-  const trajectoriesGroupRef = useRef<THREE.Group | null>(null);
-  const missilesGroupRef = useRef<THREE.Group | null>(null);
-  const explosionsGroupRef = useRef<THREE.Group | null>(null);
-
-  // Radar sweep angle
-  const sweepAngleRef = useRef(0);
-
-  // Handle GameView transitions
-  useEffect(() => {
-    if (gameView === 'START') {
-      if (globeGroupRef.current) globeGroupRef.current.visible = true;
-      if (theaterMapGroupRef.current) theaterMapGroupRef.current.visible = false;
-      targetCameraZoomRef.current = 300;
-      cameraPanOffsetRef.current = { x: 0, z: 0 };
-    } else if (gameView === 'TRANSITION') {
-      isTransitioningRef.current = true;
-      transitionProgressRef.current = 0;
-      targetCameraZoomRef.current = 135;
-    } else if (gameView === 'THEATER') {
-      if (globeGroupRef.current) globeGroupRef.current.visible = false;
-      if (theaterMapGroupRef.current) theaterMapGroupRef.current.visible = true;
-      targetCameraZoomRef.current = 135;
-    }
-  }, [gameView]);
-
-  // Main Three.js Scene Setup Loop
+  // THREE.JS SCENE INITIALIZATION (RUNS ONCE ON MOUNT)
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
 
-    // 1. Setup Scene, Camera & WebGL Renderer
+    let isDisposed = false;
+
+    // 1. Create Single Scene, Camera & Renderer
     const scene = new THREE.Scene();
-    sceneRef.current = scene;
 
     const width = container.clientWidth || window.innerWidth;
     const height = container.clientHeight || window.innerHeight;
 
     const camera = new THREE.PerspectiveCamera(40, width / height, 1, 2000);
-    camera.position.set(0, 300, 180);
-    cameraRef.current = camera;
+    camera.position.set(0, 70, 300);
 
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -141,11 +128,11 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       precision: 'mediump',
     });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    renderer.toneMapping = THREE.NoToneMapping;
     container.appendChild(renderer.domElement);
-    rendererRef.current = renderer;
 
-    // 2. Add Lighting & Starfield
+    // 2. Starfield & Lighting
     const starfield = createStarfield();
     scene.add(starfield);
 
@@ -156,13 +143,12 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     sunLight.position.set(100, 200, 150);
     scene.add(sunLight);
 
-    // 3. START SCREEN: 3D Earth Globe Group
+    // 3. START SCREEN: 3D Earth Globe Group (Low Poly 32x24 for performance)
     const globeGroup = new THREE.Group();
     scene.add(globeGroup);
-    globeGroupRef.current = globeGroup;
 
     const earthTexture = generateTacticalEarthTexture();
-    const globeGeom = new THREE.SphereGeometry(GLOBE_RADIUS, 48, 48);
+    const globeGeom = new THREE.SphereGeometry(GLOBE_RADIUS, 32, 24);
     const globeMat = new THREE.MeshStandardMaterial({
       map: earthTexture,
       roughness: 0.7,
@@ -180,56 +166,158 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     const theaterMapGroup = new THREE.Group();
     theaterMapGroup.visible = false;
     scene.add(theaterMapGroup);
-    theaterMapGroupRef.current = theaterMapGroup;
 
-    // Large Geographic Terrain Plane
-    const mapTexture = generateRegionalTacticalMapTexture(locationRef.current);
+    // Geographic Terrain Plane
+    let initialMapTexture = mapTextureCache[locationRef.current.id];
+    if (!initialMapTexture) {
+      initialMapTexture = generateRegionalTacticalMapTexture(locationRef.current);
+      mapTextureCache[locationRef.current.id] = initialMapTexture;
+    }
+
     const mapGeom = new THREE.PlaneGeometry(THEATER_MAP_SIZE, THEATER_MAP_SIZE);
     const mapMat = new THREE.MeshStandardMaterial({
-      map: mapTexture,
+      map: initialMapTexture,
       roughness: 0.8,
       metalness: 0.15,
       side: THREE.DoubleSide,
     });
     const mapMesh = new THREE.Mesh(mapGeom, mapMat);
-    mapMesh.rotation.x = -Math.PI / 2; // Flat on X-Z ground
+    mapMesh.rotation.x = -Math.PI / 2;
     mapMesh.position.set(0, 0, 0);
     theaterMapGroup.add(mapMesh);
 
-    // Central Base Marker
-    const baseGeom = new THREE.RingGeometry(1.2, 2.0, 16);
+    // Base Marker
+    const baseGeom = new THREE.RingGeometry(1.0, 1.8, 16);
     const baseMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide });
     const baseMesh = new THREE.Mesh(baseGeom, baseMat);
     baseMesh.rotation.x = -Math.PI / 2;
     baseMesh.position.set(0, 0.4, 0);
     theaterMapGroup.add(baseMesh);
 
-    // 5. Tactical Radar Overlay Group (Compact ~20-25% of Viewport)
+    // 5. SMALL TACTICAL RADAR OVERLAY (20-30% of Viewport, Radius ~24 units)
     const radarOverlayGroup = new THREE.Group();
     theaterMapGroup.add(radarOverlayGroup);
-    radarOverlayGroupRef.current = radarOverlayGroup;
 
-    // 6. Entity & Effects Groups
+    const radarBaseRadius = 24;
+    const ringRadii = [6, 12, 18, 24];
+    const ringMeshes: THREE.Mesh[] = [];
+
+    ringRadii.forEach((r, idx) => {
+      const ringG = new THREE.RingGeometry(r - 0.15, r, 32);
+      const ringM = new THREE.MeshBasicMaterial({
+        color: 0x34d399,
+        transparent: true,
+        opacity: idx === ringRadii.length - 1 ? 0.45 : 0.18,
+        side: THREE.DoubleSide,
+      });
+      const rMesh = new THREE.Mesh(ringG, ringM);
+      rMesh.rotation.x = -Math.PI / 2;
+      rMesh.position.set(0, 0.25, 0);
+      radarOverlayGroup.add(rMesh);
+      ringMeshes.push(rMesh);
+    });
+
+    // Small rotating sweep wedge
+    const sweepGeom = new THREE.CircleGeometry(radarBaseRadius, 24, 0, Math.PI / 5);
+    const sweepMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      transparent: true,
+      opacity: 0.15,
+      side: THREE.DoubleSide,
+    });
+    const sweepMesh = new THREE.Mesh(sweepGeom, sweepMat);
+    sweepMesh.rotation.x = -Math.PI / 2;
+    sweepMesh.position.set(0, 0.22, 0);
+    radarOverlayGroup.add(sweepMesh);
+
+    // 6. PRE-ALLOCATED CONTACTS OBJECT POOL (ZERO PER-FRAME ALLOCATIONS)
     const contactsGroup = new THREE.Group();
     theaterMapGroup.add(contactsGroup);
-    contactsGroupRef.current = contactsGroup;
 
-    const trajectoriesGroup = new THREE.Group();
-    theaterMapGroup.add(trajectoriesGroup);
-    trajectoriesGroupRef.current = trajectoriesGroup;
+    const contactMeshes: THREE.Mesh[] = [];
+    const contactLineGeoms: THREE.BufferGeometry[] = [];
+    const contactLineMeshes: THREE.Line[] = [];
 
+    const hostileMat = new THREE.MeshBasicMaterial({ color: 0xef4444, side: THREE.DoubleSide });
+    const unknownMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
+    const classifyingMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide });
+    const friendlyMat = new THREE.MeshBasicMaterial({ color: 0x10b981, side: THREE.DoubleSide });
+
+    const contactDiamondGeom = new THREE.RingGeometry(0.5, 0.9, 4); // Unknown ◇
+    const contactConeGeom = new THREE.ConeGeometry(0.7, 1.4, 6); // Hostile × / Cone
+    const contactCircleGeom = new THREE.CircleGeometry(0.7, 8); // Friendly ●
+
+    for (let i = 0; i < MAX_CONTACT_POOL; i++) {
+      const mesh = new THREE.Mesh(contactDiamondGeom, unknownMat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      contactsGroup.add(mesh);
+      contactMeshes.push(mesh);
+
+      // Pre-allocated Line Buffer for trajectories (max 40 points)
+      const linePositions = new Float32Array(MAX_TRAIL_POINTS * 3);
+      const lineGeom = new THREE.BufferGeometry();
+      lineGeom.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.35 });
+      const line = new THREE.Line(lineGeom, lineMat);
+      line.visible = false;
+      contactsGroup.add(line);
+      contactLineGeoms.push(lineGeom);
+      contactLineMeshes.push(line);
+    }
+
+    // 7. PRE-ALLOCATED MISSILES POOL
     const missilesGroup = new THREE.Group();
     theaterMapGroup.add(missilesGroup);
-    missilesGroupRef.current = missilesGroup;
 
+    const missileMeshes: THREE.Mesh[] = [];
+    const missileLineGeoms: THREE.BufferGeometry[] = [];
+    const missileLineMeshes: THREE.Line[] = [];
+
+    const missileMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const missileGeom = new THREE.SphereGeometry(0.6, 6, 6);
+
+    for (let i = 0; i < MAX_MISSILE_POOL; i++) {
+      const mesh = new THREE.Mesh(missileGeom, missileMat);
+      mesh.visible = false;
+      missilesGroup.add(mesh);
+      missileMeshes.push(mesh);
+
+      const mLinePositions = new Float32Array(MAX_TRAIL_POINTS * 3);
+      const mLineGeom = new THREE.BufferGeometry();
+      mLineGeom.setAttribute('position', new THREE.BufferAttribute(mLinePositions, 3));
+      const mLineMat = new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.6 });
+      const mLine = new THREE.Line(mLineGeom, mLineMat);
+      mLine.visible = false;
+      missilesGroup.add(mLine);
+      missileLineGeoms.push(mLineGeom);
+      missileLineMeshes.push(mLine);
+    }
+
+    // 8. PRE-ALLOCATED EXPLOSIONS POOL
     const explosionsGroup = new THREE.Group();
     theaterMapGroup.add(explosionsGroup);
-    explosionsGroupRef.current = explosionsGroup;
 
-    // 7. Mouse Pan / Zoom / Drag Handlers
+    const explosionMeshes: THREE.Mesh[] = [];
+    const expRingGeom = new THREE.RingGeometry(8, 9, 24);
+
+    for (let i = 0; i < MAX_EXPLOSION_POOL; i++) {
+      const expMat = new THREE.MeshBasicMaterial({
+        color: 0xef4444,
+        transparent: true,
+        opacity: 0.8,
+        side: THREE.DoubleSide,
+      });
+      const mesh = new THREE.Mesh(expRingGeom, expMat);
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.visible = false;
+      explosionsGroup.add(mesh);
+      explosionMeshes.push(mesh);
+    }
+
+    // 9. MOUSE PAN / ZOOM HANDLERS (Direct event-based, Zero React re-renders)
     const handleMouseDown = (e: MouseEvent) => {
       isDraggingRef.current = true;
-      isRightClickRef.current = e.button === 2 || e.button === 1;
       previousMousePositionRef.current = { x: e.clientX, y: e.clientY };
     };
 
@@ -238,8 +326,7 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       const deltaX = e.clientX - previousMousePositionRef.current.x;
       const deltaY = e.clientY - previousMousePositionRef.current.y;
 
-      if (gameView === 'THEATER') {
-        // Pan the geographic map
+      if (gameViewRef.current === 'THEATER') {
         cameraPanOffsetRef.current.x -= deltaX * 0.15;
         cameraPanOffsetRef.current.z -= deltaY * 0.15;
       }
@@ -253,16 +340,12 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      targetCameraZoomRef.current = Math.max(60, Math.min(260, targetCameraZoomRef.current + e.deltaY * 0.15));
-    };
-
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
+      targetCameraZoomRef.current = Math.max(60, Math.min(240, targetCameraZoomRef.current + e.deltaY * 0.15));
     };
 
     // Raycast contact selection
     const handleClick = (e: MouseEvent) => {
-      if (!container || !cameraRef.current || gameView !== 'THEATER') return;
+      if (!container || gameViewRef.current !== 'THEATER') return;
       const rect = container.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((e.clientX - rect.left) / container.clientWidth) * 2 - 1,
@@ -270,17 +353,18 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
       );
 
       const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(mouse, cameraRef.current);
+      raycaster.setFromCamera(mouse, camera);
 
-      if (contactsGroupRef.current) {
-        const intersects = raycaster.intersectObjects(contactsGroupRef.current.children, true);
-        if (intersects.length > 0) {
-          const contactId = intersects[0].object.userData?.contactId;
-          if (contactId) {
-            const found = contactsRef.current.find((c) => c.id === contactId);
-            if (found) {
-              onSelectContact(found);
-            }
+      const activeMeshes = contactMeshes.filter((m) => m.visible);
+      const intersects = raycaster.intersectObjects(activeMeshes, true);
+
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        const cid = hit.userData?.contactId;
+        if (cid) {
+          const found = contactsRef.current.find((c) => c.id === cid);
+          if (found) {
+            onSelectContactRef.current(found);
           }
         }
       }
@@ -291,59 +375,191 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     dom.addEventListener('wheel', handleWheel, { passive: false });
-    dom.addEventListener('contextmenu', handleContextMenu);
     dom.addEventListener('click', handleClick);
 
     const handleResize = () => {
-      if (!container || !cameraRef.current || !rendererRef.current) return;
+      if (!container || isDisposed) return;
       const w = container.clientWidth;
       const h = container.clientHeight;
-      cameraRef.current.aspect = w / h;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
     };
     window.addEventListener('resize', handleResize);
 
-    // 8. 60 FPS ULTRA-OPTIMIZED RENDER & SIMULATION LOOP
+    // 10. SINGLE REQUEST-ANIMATION-FRAME LOOP (ZERO ALLOCATIONS)
     let animId: number;
+    let sweepAngle = 0;
 
     const animate = () => {
+      if (isDisposed) return;
       animId = requestAnimationFrame(animate);
+
+      // Pause high-frequency rendering when tab is hidden
+      if (document.hidden) return;
+
+      const currentView = gameViewRef.current;
+      const loc = locationRef.current;
 
       // Smooth zoom damping
       cameraZoomRef.current += (targetCameraZoomRef.current - cameraZoomRef.current) * 0.08;
 
-      if (gameView === 'START') {
-        // Slowly rotate globe in space
-        if (globeMesh) globeMesh.rotation.y += 0.0012;
-        camera.position.set(0, 70, cameraZoomRef.current);
+      if (currentView === 'START') {
+        globeGroup.visible = true;
+        theaterMapGroup.visible = false;
+        starfield.visible = true;
+
+        globeMesh.rotation.y += 0.001;
+        camera.position.set(0, 60, cameraZoomRef.current);
         camera.lookAt(0, 0, 0);
-      } else if (isTransitioningRef.current) {
-        // Smooth cinematic descent
+      } else if (currentView === 'TRANSITION') {
+        globeGroup.visible = true;
+        theaterMapGroup.visible = true;
+        starfield.visible = true;
+
         transitionProgressRef.current += 0.02;
         const p = Math.min(1.0, transitionProgressRef.current);
 
-        // Interpolate from Orbit (0, 70, 300) to Tactical Overhead (0, 135, 70)
-        camera.position.set(0, THREE.MathUtils.lerp(70, 135, p), THREE.MathUtils.lerp(300, 70, p));
+        camera.position.set(0, THREE.MathUtils.lerp(60, 135, p), THREE.MathUtils.lerp(300, 70, p));
         camera.lookAt(0, 0, 0);
 
         if (p >= 1.0) {
           isTransitioningRef.current = false;
-          if (globeGroupRef.current) globeGroupRef.current.visible = false;
-          if (theaterMapGroupRef.current) theaterMapGroupRef.current.visible = true;
-          onTransitionComplete?.();
+          globeGroup.visible = false;
+          starfield.visible = false;
+          onTransitionCompleteRef.current?.();
         }
-      } else if (gameView === 'THEATER') {
-        // Focused on Tactical Geographic Map
+      } else if (currentView === 'THEATER') {
+        globeGroup.visible = false;
+        theaterMapGroup.visible = true;
+        starfield.visible = false;
+
         const pan = cameraPanOffsetRef.current;
         const zoom = cameraZoomRef.current;
 
-        // Position camera slightly tilted for depth over the geographic map
         camera.position.set(pan.x, zoom, pan.z + zoom * 0.45);
         camera.lookAt(pan.x, 0, pan.z);
 
-        // Update radar sweep angle
-        sweepAngleRef.current = (sweepAngleRef.current + 0.035) % (Math.PI * 2);
+        // Update Radar Sweep
+        sweepAngle = (sweepAngle + 0.035) % (Math.PI * 2);
+        sweepMesh.rotation.z = sweepAngle;
+
+        // Scale Radar Overlay based on current range
+        const rangeFraction = radarRangeRef.current / 500;
+        const activeRadarRadius = rangeFraction * 24;
+        sweepMesh.scale.set(rangeFraction, rangeFraction, 1);
+        ringMeshes.forEach((rm, i) => {
+          rm.visible = (i + 1) * 125 <= radarRangeRef.current + 25;
+        });
+
+        // 11. UPDATE CONTACTS POOL IN-PLACE (ZERO ALLOCATIONS)
+        const currentContacts = contactsRef.current;
+        const selectedC = selectedContactRef.current;
+
+        for (let i = 0; i < MAX_CONTACT_POOL; i++) {
+          const mesh = contactMeshes[i];
+          const lineGeom = contactLineGeoms[i];
+          const lineMesh = contactLineMeshes[i];
+
+          if (i < currentContacts.length) {
+            const c = currentContacts[i];
+            const p = geoToTheaterMapCoords(c.lat, c.lng, loc.lat, loc.lng);
+            const isSel = selectedC?.id === c.id;
+
+            mesh.visible = true;
+            mesh.position.set(p.x, 0.4 + (c.altKm > 0 ? c.altKm * 0.08 : 0), p.z);
+            mesh.userData = { contactId: c.id };
+
+            // Material & Geometry based on status
+            if (c.status === 'UNKNOWN') {
+              mesh.material = unknownMat;
+              mesh.geometry = contactDiamondGeom;
+              mesh.scale.set(0.9, 0.9, 1);
+            } else if (c.status === 'CLASSIFYING') {
+              mesh.material = classifyingMat;
+              mesh.geometry = contactDiamondGeom;
+              mesh.scale.set(1.1, 1.1, 1);
+            } else {
+              mesh.material = c.type.startsWith('FRIENDLY') ? friendlyMat : hostileMat;
+              mesh.geometry = c.type.startsWith('FRIENDLY') ? contactCircleGeom : contactConeGeom;
+              mesh.scale.set(isSel ? 1.4 : 1.0, isSel ? 1.4 : 1.0, 1);
+            }
+
+            // Update Trajectory Line in-place
+            if (c.status === 'HOSTILE' || isSel) {
+              lineMesh.visible = true;
+              const posAttr = lineGeom.getAttribute('position') as THREE.BufferAttribute;
+              const pts = c.trajectoryPoints.slice(-MAX_TRAIL_POINTS);
+              let idx = 0;
+
+              for (const [tlat, tlng, talt] of pts) {
+                const tp = geoToTheaterMapCoords(tlat, tlng, loc.lat, loc.lng);
+                posAttr.setXYZ(idx++, tp.x, 0.3 + talt * 0.06, tp.z);
+              }
+              // Connect lead to target base
+              posAttr.setXYZ(idx++, 0, 0.3, 0);
+
+              lineGeom.setDrawRange(0, idx);
+              posAttr.needsUpdate = true;
+            } else {
+              lineMesh.visible = false;
+            }
+          } else {
+            mesh.visible = false;
+            lineMesh.visible = false;
+          }
+        }
+
+        // 12. UPDATE MISSILES POOL IN-PLACE
+        const currentMissiles = missilesRef.current;
+        for (let i = 0; i < MAX_MISSILE_POOL; i++) {
+          const mesh = missileMeshes[i];
+          const lineGeom = missileLineGeoms[i];
+          const lineMesh = missileLineMeshes[i];
+
+          if (i < currentMissiles.length) {
+            const m = currentMissiles[i];
+            const p = geoToTheaterMapCoords(m.currentLat, m.currentLng, loc.lat, loc.lng);
+
+            mesh.visible = true;
+            mesh.position.set(p.x, 0.5 + m.currentAltKm * 0.1, p.z);
+
+            // Update trail line
+            lineMesh.visible = true;
+            const posAttr = lineGeom.getAttribute('position') as THREE.BufferAttribute;
+            const pts = m.trajectory.slice(-MAX_TRAIL_POINTS);
+            let idx = 0;
+
+            for (const [mlat, mlng, malt] of pts) {
+              const mp = geoToTheaterMapCoords(mlat, mlng, loc.lat, loc.lng);
+              posAttr.setXYZ(idx++, mp.x, 0.4 + malt * 0.1, mp.z);
+            }
+            lineGeom.setDrawRange(0, idx);
+            posAttr.needsUpdate = true;
+          } else {
+            mesh.visible = false;
+            lineMesh.visible = false;
+          }
+        }
+
+        // 13. UPDATE EXPLOSIONS POOL IN-PLACE
+        const currentExp = explosionsRef.current;
+        for (let i = 0; i < MAX_EXPLOSION_POOL; i++) {
+          const mesh = explosionMeshes[i];
+          if (i < currentExp.length) {
+            const exp = currentExp[i];
+            const p = geoToTheaterMapCoords(exp.lat, exp.lng, loc.lat, loc.lng);
+            const scale = Math.max(0.2, (exp.elapsedSec / exp.durationSec) * 1.6);
+
+            mesh.visible = true;
+            mesh.position.set(p.x, 0.5, p.z);
+            mesh.scale.set(scale, scale, 1);
+            (mesh.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - exp.elapsedSec / exp.durationSec);
+            (mesh.material as THREE.MeshBasicMaterial).color.set(exp.color === '#ef4444' ? 0xef4444 : 0x10b981);
+          } else {
+            mesh.visible = false;
+          }
+        }
       }
 
       renderer.render(scene, camera);
@@ -351,209 +567,24 @@ export const TacticalMap3D: React.FC<TacticalMap3DProps> = ({
 
     animate();
 
+    // CLEANUP ON TRUE UNMOUNT ONLY
     return () => {
+      isDisposed = true;
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', handleResize);
       dom.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
       dom.removeEventListener('wheel', handleWheel);
-      dom.removeEventListener('contextmenu', handleContextMenu);
       dom.removeEventListener('click', handleClick);
+
       if (renderer.domElement && container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement);
       }
       renderer.dispose();
+      scene.clear();
     };
-  }, [gameView, onContactImpact, onMissileDetonated, onSelectContact, onTransitionComplete]);
-
-  // Update Compact Radar Overlay Meshes (Small ~20-25% of Viewport)
-  useEffect(() => {
-    const radarGroup = radarOverlayGroupRef.current;
-    if (!radarGroup || gameView !== 'THEATER') return;
-
-    while (radarGroup.children.length > 0) {
-      const child = radarGroup.children[0];
-      radarGroup.remove(child);
-      if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-    }
-
-    // Small radar visual radius (approx 20-30 units on a 400-unit map)
-    const baseRadius = (radarRange / 500) * 32;
-
-    // 1. Concentric Range Rings (Thin, Subtle)
-    const steps = [0.25, 0.5, 0.75, 1.0];
-    steps.forEach((fraction) => {
-      const r = baseRadius * fraction;
-      const ringGeom = new THREE.RingGeometry(r - 0.15, r, 48);
-      const ringMat = new THREE.MeshBasicMaterial({
-        color: 0x34d399,
-        transparent: true,
-        opacity: fraction === 1.0 ? 0.5 : 0.2,
-        side: THREE.DoubleSide,
-      });
-      const ringMesh = new THREE.Mesh(ringGeom, ringMat);
-      ringMesh.rotation.x = -Math.PI / 2;
-      ringMesh.position.set(0, 0.25, 0);
-      radarGroup.add(ringMesh);
-    });
-
-    // 2. Rotating Radar Sweep Beam Wedge (Subtle)
-    const sweepGeom = new THREE.CircleGeometry(baseRadius, 24, 0, Math.PI / 5);
-    const sweepMat = new THREE.MeshBasicMaterial({
-      color: 0x10b981,
-      transparent: true,
-      opacity: 0.18,
-      side: THREE.DoubleSide,
-    });
-    const sweepMesh = new THREE.Mesh(sweepGeom, sweepMat);
-    sweepMesh.rotation.x = -Math.PI / 2;
-    sweepMesh.position.set(0, 0.22, 0);
-    radarGroup.add(sweepMesh);
-  }, [gameView, radarRange]);
-
-  // Update Contacts on Map (Small, Subtle Tactical Visuals)
-  useEffect(() => {
-    const contactsGroup = contactsGroupRef.current;
-    const trajectoriesGroup = trajectoriesGroupRef.current;
-    if (!contactsGroup || !trajectoriesGroup || gameView !== 'THEATER') return;
-
-    while (contactsGroup.children.length > 0) {
-      const child = contactsGroup.children[0];
-      contactsGroup.remove(child);
-      if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-    }
-
-    while (trajectoriesGroup.children.length > 0) {
-      const child = trajectoriesGroup.children[0];
-      trajectoriesGroup.remove(child);
-      if ((child as THREE.Line).geometry) (child as THREE.Line).geometry.dispose();
-    }
-
-    const loc = locationRef.current;
-
-    contacts.forEach((contact) => {
-      // Convert real-world Lat/Lng to planar 3D coords relative to base
-      const pos = geoToTheaterMapCoords(contact.lat, contact.lng, loc.lat, loc.lng);
-      const isSelected = selectedContact?.id === contact.id;
-
-      // Contact Color
-      let colorHex = 0xef4444; // Hostile Red
-      if (contact.status === 'UNKNOWN') colorHex = 0xf59e0b; // Amber Unknown
-      if (contact.status === 'CLASSIFYING') colorHex = 0x38bdf8; // Cyan Classifying
-      if (contact.type.startsWith('FRIENDLY')) colorHex = 0x10b981; // Green Friendly
-
-      // Small, subtle marker geometry
-      const size = isSelected ? 1.4 : 0.9;
-      let geom: THREE.BufferGeometry;
-
-      if (contact.status === 'UNKNOWN') {
-        // Diamond ◇
-        geom = new THREE.RingGeometry(size * 0.7, size, 4);
-      } else if (contact.type === 'HOSTILE_BALLISTIC') {
-        // Sharp tactical marker
-        geom = new THREE.ConeGeometry(size * 0.8, size * 1.8, 6);
-      } else {
-        // Small cross / circle
-        geom = new THREE.CircleGeometry(size, 8);
-      }
-
-      const mat = new THREE.MeshBasicMaterial({
-        color: colorHex,
-        side: THREE.DoubleSide,
-        transparent: true,
-        opacity: contact.status === 'UNKNOWN' ? 0.6 : 0.95,
-      });
-
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(pos.x, 0.4 + (contact.altKm > 0 ? contact.altKm * 0.08 : 0), pos.z);
-      mesh.userData = { contactId: contact.id };
-      contactsGroup.add(mesh);
-
-      // Thin Predicted Trajectory Line
-      if (contact.status === 'HOSTILE' || isSelected) {
-        const linePoints = [
-          new THREE.Vector3(pos.x, 0.3, pos.z),
-          new THREE.Vector3(0, 0.3, 0), // Lead line to central base
-        ];
-        const lineGeom = new THREE.BufferGeometry().setFromPoints(linePoints);
-        const lineMat = new THREE.LineDashedMaterial({
-          color: colorHex,
-          dashSize: 2,
-          gapSize: 2,
-          transparent: true,
-          opacity: isSelected ? 0.8 : 0.25,
-        });
-        const line = new THREE.Line(lineGeom, lineMat);
-        line.computeLineDistances();
-        trajectoriesGroup.add(line);
-      }
-    });
-  }, [contacts, gameView, selectedContact]);
-
-  // Update Missiles on Map (Thin, Elegant Flight Streaks)
-  useEffect(() => {
-    const missilesGroup = missilesGroupRef.current;
-    if (!missilesGroup || gameView !== 'THEATER') return;
-
-    while (missilesGroup.children.length > 0) {
-      const child = missilesGroup.children[0];
-      missilesGroup.remove(child);
-      if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-    }
-
-    const loc = locationRef.current;
-
-    missiles.forEach((m) => {
-      const pos = geoToTheaterMapCoords(m.currentLat, m.currentLng, loc.lat, loc.lng);
-      const geom = new THREE.SphereGeometry(0.7, 8, 8);
-      const mat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.position.set(pos.x, 0.5 + m.currentAltKm * 0.1, pos.z);
-      missilesGroup.add(mesh);
-
-      // Thin streak
-      const sourcePos = geoToTheaterMapCoords(m.sourceLat, m.sourceLng, loc.lat, loc.lng);
-      const lineGeom = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(sourcePos.x, 0.3, sourcePos.z),
-        new THREE.Vector3(pos.x, 0.3 + m.currentAltKm * 0.1, pos.z),
-      ]);
-      const lineMat = new THREE.LineBasicMaterial({ color: 0x06b6d4, transparent: true, opacity: 0.6 });
-      const line = new THREE.Line(lineGeom, lineMat);
-      missilesGroup.add(line);
-    });
-  }, [missiles, gameView]);
-
-  // Update Explosions on Map (Small shockwave rings)
-  useEffect(() => {
-    const explosionsGroup = explosionsGroupRef.current;
-    if (!explosionsGroup || gameView !== 'THEATER') return;
-
-    while (explosionsGroup.children.length > 0) {
-      const child = explosionsGroup.children[0];
-      explosionsGroup.remove(child);
-      if ((child as THREE.Mesh).geometry) (child as THREE.Mesh).geometry.dispose();
-    }
-
-    const loc = locationRef.current;
-
-    explosions.forEach((exp) => {
-      const pos = geoToTheaterMapCoords(exp.lat, exp.lng, loc.lat, loc.lng);
-      const radius = Math.max(1, exp.radiusKm * 0.45);
-      const geom = new THREE.RingGeometry(radius - 0.4, radius, 32);
-      const mat = new THREE.MeshBasicMaterial({
-        color: exp.color === '#ef4444' ? 0xef4444 : 0x10b981,
-        transparent: true,
-        opacity: Math.max(0, 1 - exp.elapsedSec / exp.durationSec),
-        side: THREE.DoubleSide,
-      });
-      const mesh = new THREE.Mesh(geom, mat);
-      mesh.rotation.x = -Math.PI / 2;
-      mesh.position.set(pos.x, 0.5, pos.z);
-      explosionsGroup.add(mesh);
-    });
-  }, [explosions, gameView]);
+  }, []); // EMPTY DEPENDENCIES — INITIALIZES ONCE PER MOUNT!
 
   return <div ref={mountRef} className="w-full h-full absolute inset-0 z-0 cursor-grab active:cursor-grabbing" />;
 };
