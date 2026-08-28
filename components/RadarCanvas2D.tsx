@@ -60,6 +60,16 @@ export interface Explosion2D {
   color: string;
 }
 
+export interface DeathMarker2D {
+  id: string;
+  x: number;
+  y: number;
+  callsign: string;
+  category: string;
+  lifetime: number;
+  maxLifetime: number;
+}
+
 interface RadarCanvas2DProps {
   location: GeoLocation;
   radarRangeKm: number;
@@ -84,6 +94,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
   const interceptorsRef = useRef<Interceptor2D[]>([]);
   const hostileRocketsRef = useRef<HostileRocket2D[]>([]);
   const explosionsRef = useRef<Explosion2D[]>([]);
+  const deathMarkersRef = useRef<DeathMarker2D[]>([]);
   const sweepAngleRef = useRef(0);
   const autoInterceptRef = useRef(autoIntercept);
   autoInterceptRef.current = autoIntercept;
@@ -250,6 +261,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
     interceptorsRef.current = [];
     hostileRocketsRef.current = [];
     explosionsRef.current = [];
+    deathMarkersRef.current = [];
     for (let i = 0; i < 6; i++) {
       spawnTarget(i === 0);
     }
@@ -380,6 +392,18 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
             progress: 0,
             color: '#ef4444',
           });
+
+          // Add Red X Death Marker at impact site
+          deathMarkersRef.current.push({
+            id: `death-${Date.now()}-${Math.random()}`,
+            x: t.x,
+            y: t.y,
+            callsign: t.callsign,
+            category: t.category,
+            lifetime: 12.0,
+            maxLifetime: 12.0,
+          });
+
           onUpdateStatsRef.current((prev) => ({ ...prev, impacts: prev.impacts + (t.isBoss ? 2 : 1) }));
           if (selectedTargetIdRef.current === t.id) {
             onSelectTargetRef.current(null);
@@ -449,6 +473,17 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
               color: '#22c55e',
             });
 
+            // ADD RED X DEATH MARKER WHERE DRONE/TARGET DIED!
+            deathMarkersRef.current.push({
+              id: `death-${Date.now()}-${Math.random()}`,
+              x: target.x,
+              y: target.y,
+              callsign: target.callsign,
+              category: target.category,
+              lifetime: 14.0, // Stays visible for 14 seconds
+              maxLifetime: 14.0,
+            });
+
             targetsRef.current = targetsRef.current.filter((t) => t.id !== int.targetId);
             onUpdateStatsRef.current((prev) => ({ ...prev, intercepted: prev.intercepted + 1 }));
 
@@ -480,7 +515,11 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       }
       interceptorsRef.current = activeInterceptors;
 
-      // 7. UPDATE EXPLOSIONS DECAY
+      // 7. UPDATE DEATH MARKERS & EXPLOSIONS DECAY
+      deathMarkersRef.current = deathMarkersRef.current
+        .map((dm) => ({ ...dm, lifetime: dm.lifetime - deltaTime }))
+        .filter((dm) => dm.lifetime > 0);
+
       explosionsRef.current = explosionsRef.current
         .map((e) => ({ ...e, progress: e.progress + 1.8 * deltaTime }))
         .filter((e) => e.progress < 1.0);
@@ -556,7 +595,42 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       ctx.shadowBlur = 0;
       ctx.restore();
 
-      // 9. DRAW HOSTILE ROCKET ATTACKS
+      // 9. DRAW RED X DEATH / WRECKAGE MARKERS WHERE TARGETS DIED
+      deathMarkersRef.current.forEach((dm) => {
+        // Fade out smoothly in last 3 seconds
+        const alpha = Math.min(1.0, dm.lifetime / 3.0);
+
+        ctx.save();
+        // Bold Red X Marker
+        ctx.strokeStyle = `rgba(239, 68, 68, ${alpha * 0.95})`;
+        ctx.lineWidth = 2.2;
+        ctx.shadowColor = '#ef4444';
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.moveTo(dm.x - 5, dm.y - 5);
+        ctx.lineTo(dm.x + 5, dm.y + 5);
+        ctx.moveTo(dm.x + 5, dm.y - 5);
+        ctx.lineTo(dm.x - 5, dm.y + 5);
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Subtle Wreckage Dashed Circle
+        ctx.strokeStyle = `rgba(239, 68, 68, ${alpha * 0.5})`;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 2]);
+        ctx.beginPath();
+        ctx.arc(dm.x, dm.y, 8, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Label: KIA Callsign
+        ctx.fillStyle = `rgba(248, 113, 113, ${alpha * 0.85})`;
+        ctx.font = 'bold 8px monospace';
+        ctx.fillText(`KIA ${dm.callsign}`, dm.x + 8, dm.y + 3);
+        ctx.restore();
+      });
+
+      // 10. DRAW HOSTILE ROCKET ATTACKS
       hostileRocketsRef.current.forEach((rk) => {
         ctx.strokeStyle = '#ef4444';
         ctx.lineWidth = 2;
@@ -574,7 +648,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
         ctx.shadowBlur = 0;
       });
 
-      // 10. DRAW TARGETS (Custom Icons + Armor HP Bars!)
+      // 11. DRAW ACTIVE TARGETS (Custom Icons + Armor HP Bars)
       targetsRef.current.forEach((t) => {
         const isSelected = selectedTargetIdRef.current === t.id;
 
@@ -723,7 +797,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
         }
       });
 
-      // 11. DRAW INTERCEPTOR STRIKES
+      // 12. DRAW INTERCEPTOR STRIKES
       interceptorsRef.current.forEach((int) => {
         ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
         ctx.lineWidth = 2;
@@ -741,7 +815,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
         ctx.shadowBlur = 0;
       });
 
-      // 12. DRAW EXPLOSIONS
+      // 13. DRAW EXPLOSIONS
       explosionsRef.current.forEach((exp) => {
         const curRadius = exp.radius + (exp.maxRadius - exp.radius) * exp.progress;
         const alpha = Math.max(0, 1 - exp.progress);
@@ -765,7 +839,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       const clickY = clientY - rect.top - canvas.height / 2;
 
       let found: Target2D | null = null;
-      let minDistance = 36; // Responsive touch radius for mobile fingers
+      let minDistance = 36;
 
       targetsRef.current.forEach((t) => {
         const d = Math.hypot(t.x - clickX, t.y - clickY);
