@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   GeoLocation,
   TacticalContact,
@@ -15,7 +15,7 @@ import {
   GameView,
 } from '../types/tactical';
 import { WORLD_LOCATIONS } from '../utils/geoLocations';
-import { WorldGlobe3D } from './WorldGlobe3D';
+import { TacticalMap3D } from './TacticalMap3D';
 import { StartScreen3D } from './StartScreen3D';
 import { TacticalHud3D } from './TacticalHud3D';
 import { InterceptModal } from './InterceptModal';
@@ -96,7 +96,7 @@ export const GameEngine3D: React.FC = () => {
     {
       id: 'm-1',
       code: 'MISSION 01',
-      title: 'AIR DEFENSE SHIELD',
+      title: 'THEATER AIR DEFENSE',
       type: 'AIR_DEFENSE',
       objective: 'Maintain airspace defense perimeter and protect regional theater.',
       secondaryObjective: 'Achieve >80% interception accuracy.',
@@ -116,7 +116,7 @@ export const GameEngine3D: React.FC = () => {
     const now = new Date();
     const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
     setIntelLogs((prev) => [
-      ...prev.slice(-25),
+      ...prev.slice(-20),
       { id: `log-${Date.now()}-${Math.random()}`, timestamp: timeStr, category, message, threatLevel },
     ]);
   }, []);
@@ -125,7 +125,6 @@ export const GameEngine3D: React.FC = () => {
   const launchMissile = useCallback((weapon: WeaponSystem, targetContact: TacticalContact, isAuto: boolean = false) => {
     if (weapon.ammo <= 0) return;
 
-    // Deduct weapon ammo
     setActiveWeapons((prev) => ({
       ...prev,
       [weapon.id]: {
@@ -134,7 +133,6 @@ export const GameEngine3D: React.FC = () => {
       },
     }));
 
-    // Update shots fired stats
     setStats((prev) => ({
       ...prev,
       shotsFired: prev.shotsFired + 1,
@@ -145,12 +143,12 @@ export const GameEngine3D: React.FC = () => {
     const newMissile: TacticalMissile = {
       id: `missile-${Date.now()}`,
       weaponId: weapon.id,
-      sourceName: `${selectedLocation.name} Silo`,
+      sourceName: `${selectedLocation.name} Base`,
       sourceLat: selectedLocation.lat,
       sourceLng: selectedLocation.lng,
       currentLat: selectedLocation.lat,
       currentLng: selectedLocation.lng,
-      currentAltKm: 0.5,
+      currentAltKm: 0.2,
       targetContactId: targetContact.id,
       targetLat: targetContact.lat,
       targetLng: targetContact.lng,
@@ -159,7 +157,7 @@ export const GameEngine3D: React.FC = () => {
       manualHeadingOffset: 0,
       fuelPercent: 100,
       flightProgress: 0,
-      trajectory: [[selectedLocation.lat, selectedLocation.lng, 0.5]],
+      trajectory: [[selectedLocation.lat, selectedLocation.lng, 0.2]],
     };
 
     setMissiles((prev) => [...prev, newMissile]);
@@ -181,34 +179,34 @@ export const GameEngine3D: React.FC = () => {
   // Complete Transition into Theater view
   const handleTransitionComplete = () => {
     setGameView('THEATER');
-    addIntelLog('DETECTION', `TACTICAL THEATER ACQUIRED: ${selectedLocation.name.toUpperCase()} COMMAND ONLINE.`);
+    addIntelLog('DETECTION', `THEATER ACQUIRED: ${selectedLocation.name.toUpperCase()} COMMAND ONLINE.`);
   };
 
-  // Handle Threat Spawning and Classification Game Loop
+  // Handle Threat Spawning, Movement & Radar Range Detection Loop
   useEffect(() => {
     if (gameView !== 'THEATER') return;
 
     let spawnCounter = 0;
-    const callsignLetters = ['A', 'B', 'X', 'K', 'V', 'Z'];
+    const callsignLetters = ['A', 'B', 'X', 'K', 'V', 'Z', 'C', 'D'];
 
     const interval = setInterval(() => {
       spawnCounter++;
 
-      // 1. Periodically spawn new contacts (every 6 seconds)
-      if (spawnCounter % 6 === 0) {
+      // 1. Spawning distributed targets around the theater (every 5-6s)
+      if (spawnCounter % 5 === 0) {
         const idNum = Math.floor(10 + Math.random() * 89);
         const letter = callsignLetters[Math.floor(Math.random() * callsignLetters.length)];
         const callsign = `${letter}-${idNum}`;
 
-        // Spawn 4-10 degrees away from location
+        // Wide realistic geographic distribution (spawns 3-8 degrees away ≈ 300-800 km)
         const angle = Math.random() * Math.PI * 2;
-        const distDeg = 4 + Math.random() * 6;
+        const distDeg = 3.5 + Math.random() * 5.0;
         const spawnLat = selectedLocation.lat + Math.sin(angle) * distDeg;
         const spawnLng = selectedLocation.lng + Math.cos(angle) * distDeg;
 
         const isBallistic = Math.random() < 0.5;
-        const altKm = isBallistic ? 55 : 12;
-        const velocity = isBallistic ? 4.8 : 1.2;
+        const altKm = isBallistic ? 45 : 10;
+        const velocity = isBallistic ? 4.5 : 1.1;
 
         const newContact: TacticalContact = {
           id: `contact-${Date.now()}`,
@@ -232,19 +230,18 @@ export const GameEngine3D: React.FC = () => {
         };
 
         setContacts((prev) => [...prev, newContact]);
-        audioEngine.playRadarPing();
-        addIntelLog('DETECTION', `UNKNOWN CONTACT DETECTED ON RADAR PERIMETER.`);
+        addIntelLog('DETECTION', `UNKNOWN CONTACT ${callsign} ON SATELLITE PERIMETER.`);
 
-        // Add dynamically as mission target
+        // Dynamic Mission Creation
         setActiveMissions((prev) => [
           ...prev.filter((m) => m.id !== `m-${callsign}`),
           {
             id: `m-${callsign}`,
             code: `INTERCEPT-${callsign}`,
-            title: `INTERCEPT THREAT ${callsign}`,
+            title: `INTERCEPT CONTACT ${callsign}`,
             type: 'INTERCEPT_CONTACT',
-            objective: `Track and destroy hostile threat ${callsign} before impact.`,
-            secondaryObjective: 'Execute weapon launch.',
+            objective: `Track and neutralize approaching contact ${callsign} before impact.`,
+            secondaryObjective: 'Authorize SAM / ABM launch.',
             targetContactId: newContact.id,
             threatCallsign: callsign,
             eta: `${newContact.etaSeconds}s`,
@@ -255,40 +252,52 @@ export const GameEngine3D: React.FC = () => {
         ]);
       }
 
-      // 2. Advance Contacts & Classify
+      // 2. Advance Contacts Movement & Radar Detection
       setContacts((prevContacts) => {
         const nextContacts: TacticalContact[] = [];
 
         for (const contact of prevContacts) {
-          // Classify contact
-          let nextStatus = contact.status;
-          let nextProgress = contact.classificationProgress + 15;
+          // Distance in degrees to base
+          const distDeg = Math.sqrt(
+            Math.pow(contact.lat - selectedLocation.lat, 2) + Math.pow(contact.lng - selectedLocation.lng, 2)
+          );
+          const distKm = distDeg * 111;
 
-          if (contact.status === 'UNKNOWN') {
-            nextStatus = 'CLASSIFYING';
-          } else if (contact.status === 'CLASSIFYING' && nextProgress >= 100) {
-            nextStatus = 'HOSTILE';
-            addIntelLog('CLASSIFICATION', `CONTACT ${contact.callsign} CLASSIFIED AS ${contact.type.replace('HOSTILE_', '')}.`, contact.threatLevel);
+          // Check if contact entered radar range
+          const inRadarRange = distKm <= radarRange;
+          let nextStatus = contact.status;
+          let nextProgress = contact.classificationProgress;
+
+          if (inRadarRange) {
+            if (contact.status === 'UNKNOWN') {
+              nextStatus = 'CLASSIFYING';
+              audioEngine.playRadarPing();
+              addIntelLog('DETECTION', `CONTACT ${contact.callsign} ENTERED ${radarRange}KM RADAR RANGE.`);
+            } else if (contact.status === 'CLASSIFYING') {
+              nextProgress += 25;
+              if (nextProgress >= 100) {
+                nextStatus = 'HOSTILE';
+                addIntelLog('CLASSIFICATION', `CONTACT ${contact.callsign} CLASSIFIED AS ${contact.type.replace('HOSTILE_', '')}.`, contact.threatLevel);
+              }
+            }
           }
 
-          // Move contact towards target location
+          // Move contact towards base
           const dLat = (contact.targetLat - contact.lat) * 0.02;
           const dLng = (contact.targetLng - contact.lng) * 0.02;
           const newLat = contact.lat + dLat;
           const newLng = contact.lng + dLng;
-          const newAlt = Math.max(1, contact.altKm - 0.5);
+          const newAlt = Math.max(0.5, contact.altKm - 0.4);
 
-          const distToTarget = Math.sqrt(Math.pow(contact.targetLat - newLat, 2) + Math.pow(contact.targetLng - newLng, 2));
-
-          if (distToTarget < 0.25) {
-            // Impact!
+          // Check Impact
+          if (distDeg < 0.2) {
             audioEngine.playExplosion();
             setStats((prev) => ({
               ...prev,
               impacts: prev.impacts + 1,
               integrity: Math.max(0, prev.integrity - 15),
             }));
-            addIntelLog('IMPACT', `CRITICAL IMPACT AT ${selectedLocation.name.toUpperCase()}! DEFENSE SHIELD COMPROMISED.`, 'CRITICAL');
+            addIntelLog('IMPACT', `IMPACT CONFIRMED AT ${selectedLocation.name.toUpperCase()}!`, 'CRITICAL');
 
             setExplosions((prev) => [
               ...prev,
@@ -296,9 +305,9 @@ export const GameEngine3D: React.FC = () => {
                 id: `exp-${Date.now()}`,
                 lat: newLat,
                 lng: newLng,
-                altKm: 1,
-                radiusKm: 20,
-                maxRadiusKm: 20,
+                altKm: 0.5,
+                radiusKm: 12,
+                maxRadiusKm: 12,
                 durationSec: 2,
                 elapsedSec: 0,
                 color: '#ef4444',
@@ -321,7 +330,7 @@ export const GameEngine3D: React.FC = () => {
         return nextContacts;
       });
 
-      // 3. Automated AI Iron Dome Defense
+      // 3. Auto AI Iron Dome Defense
       if (defenseMode === 'AUTO') {
         setContacts((currentContacts) => {
           const hostileThreat = currentContacts.find((c) => c.status === 'HOSTILE' && c.classificationProgress >= 80);
@@ -341,21 +350,18 @@ export const GameEngine3D: React.FC = () => {
         const nextMissiles: TacticalMissile[] = [];
 
         for (const m of prevMissiles) {
-          const nextProgress = m.flightProgress + 0.08;
+          const nextProgress = m.flightProgress + 0.1;
           const currentLat = m.sourceLat + (m.targetLat - m.sourceLat) * nextProgress;
           const currentLng = m.sourceLng + (m.targetLng - m.sourceLng) * nextProgress;
-          const currentAlt = Math.sin(nextProgress * Math.PI) * 45;
+          const currentAlt = Math.sin(nextProgress * Math.PI) * 35;
 
           if (nextProgress >= 1.0) {
-            // Detonation!
+            // Detonation & Kill Evaluation
             audioEngine.playExplosion();
 
-            // Destroy target contact
-            let targetCallsign = '';
             setContacts((prev) =>
               prev.filter((c) => {
-                if (c.id === m.targetContactId || Math.abs(c.lat - currentLat) < 0.5) {
-                  targetCallsign = c.callsign;
+                if (c.id === m.targetContactId || Math.abs(c.lat - currentLat) < 0.4) {
                   setStats((prevStats) => ({
                     ...prevStats,
                     intercepted: prevStats.intercepted + 1,
@@ -378,7 +384,7 @@ export const GameEngine3D: React.FC = () => {
               )
             );
 
-            // Trigger 3D Explosion Shockwave
+            // Small 3D Explosion shockwave
             setExplosions((prev) => [
               ...prev,
               {
@@ -386,8 +392,8 @@ export const GameEngine3D: React.FC = () => {
                 lat: currentLat,
                 lng: currentLng,
                 altKm: currentAlt,
-                radiusKm: 25,
-                maxRadiusKm: 25,
+                radiusKm: 15,
+                maxRadiusKm: 15,
                 durationSec: 2,
                 elapsedSec: 0,
                 color: '#10b981',
@@ -422,7 +428,7 @@ export const GameEngine3D: React.FC = () => {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeManualMissile?.id, activeWeapons, addIntelLog, defenseMode, gameView, launchMissile, selectedLocation]);
+  }, [activeManualMissile?.id, activeWeapons, addIntelLog, defenseMode, gameView, launchMissile, radarRange, selectedLocation]);
 
   const handleToggleMute = () => {
     const next = !isMuted;
@@ -431,9 +437,9 @@ export const GameEngine3D: React.FC = () => {
   };
 
   return (
-    <main className="relative w-screen h-screen overflow-hidden bg-black select-none">
-      {/* 3D WebGL World Layer */}
-      <WorldGlobe3D
+    <main className="relative w-screen h-screen overflow-hidden bg-black select-none font-mono">
+      {/* 3D WebGL World Layer (Dark Geographic Map with Small Radar Overlay) */}
+      <TacticalMap3D
         location={selectedLocation}
         gameView={gameView}
         radarRange={radarRange}
@@ -443,6 +449,8 @@ export const GameEngine3D: React.FC = () => {
         selectedContact={selectedContact}
         trackedContactId={trackedContactId}
         onSelectContact={(c) => setSelectedContact(c)}
+        onContactImpact={() => {}}
+        onMissileDetonated={() => {}}
         onTransitionComplete={handleTransitionComplete}
       />
 
