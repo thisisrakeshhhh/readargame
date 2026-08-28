@@ -146,28 +146,58 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
           </span>
         </div>
 
-        {/* Right: Auto Intercept Toggle */}
-        <button
-          onClick={onToggleAutoIntercept}
-          className={`px-3 py-1.5 rounded border text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-            autoIntercept
-              ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
-              : 'bg-zinc-950 border-emerald-800 text-emerald-400 hover:border-emerald-500'
-          }`}
-        >
-          {autoIntercept ? (
-            <>
-              <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-              <span>AUTO INTERCEPT: ON</span>
-            </>
-          ) : (
-            <>
-              <Crosshair className="w-3.5 h-3.5 text-emerald-400" />
-              <span>MODE: MANUAL</span>
-            </>
-          )}
-        </button>
+        {/* Right: Manual Strike Button & Auto Intercept Toggle */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              if ((window as any).__manualStrike) {
+                (window as any).__manualStrike();
+              }
+            }}
+            className="px-3 py-1.5 rounded bg-red-600 hover:bg-red-500 active:scale-95 text-black font-black text-[11px] flex items-center gap-1 shadow-[0_0_12px_rgba(239,68,68,0.4)] transition-all cursor-pointer uppercase"
+            title="Launch Manual Interceptor Strike"
+          >
+            <Crosshair className="w-3.5 h-3.5" />
+            <span>STRIKE</span>
+          </button>
 
+          <button
+            onClick={onToggleAutoIntercept}
+            className={`px-3 py-1.5 rounded border text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+              autoIntercept
+                ? 'bg-cyan-950 border-cyan-400 text-cyan-300 shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                : 'bg-zinc-950 border-emerald-800 text-emerald-400 hover:border-emerald-500'
+            }`}
+          >
+            {autoIntercept ? (
+              <>
+                <Cpu className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+                <span>AUTO: ON</span>
+              </>
+            ) : (
+              <>
+                <Crosshair className="w-3.5 h-3.5 text-emerald-400" />
+                <span>MANUAL</span>
+              </>
+            )}
+          </button>
+        </div>
+
+      </div>
+
+      {/* 4. MOBILE FLOATING QUICK STRIKE BUTTON */}
+      <div className="sm:hidden fixed bottom-20 right-4 pointer-events-auto z-50">
+        <button
+          onClick={() => {
+            if ((window as any).__manualStrike) {
+              (window as any).__manualStrike();
+            }
+          }}
+          className="w-14 h-14 rounded-full bg-red-600 active:scale-90 text-black font-black flex flex-col items-center justify-center shadow-[0_0_20px_rgba(239,68,68,0.7)] border-2 border-red-400 cursor-pointer"
+        >
+          <Crosshair className="w-6 h-6 animate-pulse" />
+          <span className="text-[9px] font-black tracking-tighter">FIRE</span>
+        </button>
       </div>
 
     </div>

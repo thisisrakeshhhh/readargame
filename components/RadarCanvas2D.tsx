@@ -115,9 +115,34 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
     audioEngine.playMissileLaunch();
   };
 
-  // Expose launch function to parent / window
+  // Manual Strike Trigger Function (Mobile button + Spacebar)
+  const triggerManualStrike = () => {
+    // 1. If a target is currently selected, strike it!
+    const selId = selectedTargetIdRef.current;
+    if (selId) {
+      const target = targetsRef.current.find((t) => t.id === selId);
+      if (target && !target.isIntercepting) {
+        launchInterceptorAt(target);
+        return;
+      }
+    }
+
+    // 2. Otherwise strike the closest hostile / threat in radar
+    const closestThreat = targetsRef.current
+      .filter((t) => !t.isIntercepting)
+      .sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y))[0];
+
+    if (closestThreat) {
+      closestThreat.status = 'HOSTILE';
+      closestThreat.isScanned = true;
+      launchInterceptorAt(closestThreat);
+    }
+  };
+
+  // Expose launch functions to window for UI buttons
   useEffect(() => {
     (window as any).__launchInterceptor = launchInterceptorAt;
+    (window as any).__manualStrike = triggerManualStrike;
   }, []);
 
   // SPACEBAR KEY LISTENER FOR MANUAL STRIKES
@@ -125,27 +150,7 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' || e.key === ' ') {
         e.preventDefault();
-
-        // 1. If a target is currently selected, strike it!
-        const selId = selectedTargetIdRef.current;
-        if (selId) {
-          const target = targetsRef.current.find((t) => t.id === selId);
-          if (target && !target.isIntercepting) {
-            launchInterceptorAt(target);
-            return;
-          }
-        }
-
-        // 2. Otherwise strike the closest hostile / threat in radar
-        const closestThreat = targetsRef.current
-          .filter((t) => !t.isIntercepting)
-          .sort((a, b) => Math.hypot(a.x, a.y) - Math.hypot(b.x, b.y))[0];
-
-        if (closestThreat) {
-          closestThreat.status = 'HOSTILE';
-          closestThreat.isScanned = true;
-          launchInterceptorAt(closestThreat);
-        }
+        triggerManualStrike();
       }
     };
 
@@ -753,14 +758,14 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
 
     animId = requestAnimationFrame(animate);
 
-    // Click to Select Target
-    const handleCanvasClick = (e: MouseEvent) => {
+    // Pointer Handler (Click & Mobile Touch Selection)
+    const handlePointerSelect = (clientX: number, clientY: number) => {
       const rect = canvas.getBoundingClientRect();
-      const clickX = e.clientX - rect.left - canvas.width / 2;
-      const clickY = e.clientY - rect.top - canvas.height / 2;
+      const clickX = clientX - rect.left - canvas.width / 2;
+      const clickY = clientY - rect.top - canvas.height / 2;
 
       let found: Target2D | null = null;
-      let minDistance = 24;
+      let minDistance = 36; // Responsive touch radius for mobile fingers
 
       targetsRef.current.forEach((t) => {
         const d = Math.hypot(t.x - clickX, t.y - clickY);
@@ -773,14 +778,26 @@ export const RadarCanvas2D: React.FC<RadarCanvas2DProps> = ({
       onSelectTargetRef.current(found);
     };
 
+    const handleCanvasClick = (e: MouseEvent) => {
+      handlePointerSelect(e.clientX, e.clientY);
+    };
+
+    const handleCanvasTouch = (e: TouchEvent) => {
+      if (e.touches && e.touches.length > 0) {
+        handlePointerSelect(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    };
+
     canvas.addEventListener('click', handleCanvasClick);
+    canvas.addEventListener('touchstart', handleCanvasTouch, { passive: true });
 
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', resize);
       canvas.removeEventListener('click', handleCanvasClick);
+      canvas.removeEventListener('touchstart', handleCanvasTouch);
     };
   }, [location, radarRangeKm]);
 
-  return <canvas ref={canvasRef} className="w-full h-full absolute inset-0 z-10 cursor-crosshair" />;
+  return <canvas ref={canvasRef} className="w-full h-full absolute inset-0 z-10 cursor-crosshair touch-none" />;
 };
