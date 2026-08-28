@@ -1,8 +1,7 @@
 'use client';
 
 import React from 'react';
-import { GeoLocation } from '../types/tactical';
-import { Target2D } from './RadarCanvas2D';
+import { GeoLocation, Target2D } from '../types/tactical';
 import { Radio, Crosshair, Cpu, Volume2, VolumeX, RotateCcw, X, Zap } from 'lucide-react';
 
 interface RadarControlsHUDProps {
@@ -38,15 +37,15 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
     <div className="absolute inset-0 pointer-events-none z-20 flex flex-col justify-between p-3 md:p-5 select-none font-mono text-emerald-400">
       
       {/* 1. COMPACT TOP HUD */}
-      <div className="w-full flex items-center justify-between gap-3 bg-black/80 border border-emerald-500/40 px-4 py-2 rounded-xl backdrop-blur-sm pointer-events-auto text-xs">
+      <div className="w-full flex items-center justify-between gap-3 bg-black/85 border border-emerald-500/40 px-4 py-2 rounded-xl backdrop-blur-md pointer-events-auto text-xs shadow-[0_0_15px_rgba(16,185,129,0.15)]">
         
         {/* Left: Brand & Location */}
         <div className="flex items-center gap-3">
           <span className="text-xl">{location.flag}</span>
           <div className="flex items-center gap-2">
-            <span className="font-black text-emerald-300 tracking-wider">READAR COMMAND</span>
+            <span className="font-black text-emerald-300 tracking-wider">READAR</span>
             <span className="text-zinc-600">|</span>
-            <span className="text-emerald-400 font-bold uppercase">LOCATION: {location.name.toUpperCase()}</span>
+            <span className="text-emerald-400 font-bold uppercase">{location.name.toUpperCase()}</span>
           </div>
         </div>
 
@@ -57,8 +56,6 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
             <span>ONLINE</span>
           </div>
 
-          <span className="text-zinc-600">|</span>
-          <span>THREAT: <strong className="text-amber-400">MED</strong></span>
           <span className="text-zinc-600">|</span>
           <span>INTERCEPTED: <strong className="text-emerald-300">{stats.intercepted}</strong></span>
           <span className="text-zinc-600">|</span>
@@ -87,9 +84,12 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
 
       {/* 2. FLOATING SMALL TARGET CARD (Appears when a target is clicked) */}
       {selectedTarget && (
-        <div className="self-end mr-2 bg-black/90 border border-red-500/80 p-3.5 rounded-xl text-xs space-y-2.5 max-w-xs w-64 shadow-[0_0_20px_rgba(239,68,68,0.3)] pointer-events-auto backdrop-blur-md">
+        <div className="self-end mr-2 bg-black/90 border border-red-500/80 p-3.5 rounded-xl text-xs space-y-2.5 max-w-xs w-64 shadow-[0_0_25px_rgba(239,68,68,0.35)] pointer-events-auto backdrop-blur-md">
           <div className="flex items-center justify-between border-b border-red-900/60 pb-1.5">
-            <span className="font-black text-red-400 tracking-wider">TARGET {selectedTarget.callsign}</span>
+            <div className="flex items-center gap-1.5 font-black text-red-400 tracking-wider">
+              <span>{selectedTarget.symbol}</span>
+              <span>TARGET {selectedTarget.callsign}</span>
+            </div>
             <button onClick={onDeselectTarget} className="text-zinc-500 hover:text-red-300 p-0.5 cursor-pointer">
               <X className="w-4 h-4" />
             </button>
@@ -97,7 +97,7 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
 
           <div className="grid grid-cols-2 gap-1.5 text-[10px] text-red-200">
             <div>STATUS: <strong className="text-red-400">{selectedTarget.status}</strong></div>
-            <div>TYPE: <strong className="text-white">{selectedTarget.type}</strong></div>
+            <div>TYPE: <strong className="text-white">{selectedTarget.category}</strong></div>
             <div>SPEED: <strong className="text-white">{selectedTarget.speedKmS} KM/S</strong></div>
             <div>DISTANCE: <strong className="text-amber-300">{selectedTarget.distanceKm} KM</strong></div>
           </div>
@@ -112,7 +112,7 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
       )}
 
       {/* 3. COMPACT BOTTOM HUD */}
-      <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/80 border border-emerald-500/40 px-4 py-2.5 rounded-xl backdrop-blur-sm pointer-events-auto text-xs">
+      <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/85 border border-emerald-500/40 px-4 py-2 rounded-xl backdrop-blur-md pointer-events-auto text-xs shadow-[0_0_15px_rgba(16,185,129,0.15)]">
         
         {/* Left: Range Selector */}
         <div className="flex items-center gap-2">
@@ -134,10 +134,10 @@ export const RadarControlsHUD: React.FC<RadarControlsHUDProps> = ({
           </div>
         </div>
 
-        {/* Center: Radar Status */}
-        <div className="flex items-center gap-2 text-[10px] text-emerald-500">
-          <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-          <span>SCANNING ACTIVE</span>
+        {/* Center: Spacebar Quick Intercept Hint */}
+        <div className="hidden md:flex items-center gap-2 text-[10px] text-emerald-500/80">
+          <span className="bg-emerald-950 px-1.5 py-0.5 rounded border border-emerald-800 text-emerald-300 font-mono">[SPACE]</span>
+          <span>QUICK INTERCEPT CLOSEST HOSTILE</span>
         </div>
 
         {/* Right: Auto Intercept Toggle */}
