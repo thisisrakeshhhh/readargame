@@ -265,20 +265,28 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
       </div>
 
       {/* Mandatory AdSense & Legal Compliance Navigation */}
-      <footer className="mt-4 z-10 text-center space-y-2 text-xs text-zinc-500">
+      <footer className="mt-4 z-10 text-center space-y-2.5 text-xs text-zinc-500 max-w-lg px-2">
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px]">
+          <a href="/how-to-play" className="text-zinc-300 hover:text-emerald-400 font-bold underline transition-colors">How to Play</a>
+          <span className="text-zinc-700">|</span>
+          <a href="/radar-guide" className="text-zinc-300 hover:text-emerald-400 font-bold underline transition-colors">Radar Guide</a>
+          <span className="text-zinc-700">|</span>
           <a href="/privacy" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Privacy Policy</a>
           <span className="text-zinc-700">|</span>
-          <a href="/terms" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Terms of Service</a>
-          <span className="text-zinc-700">|</span>
-          <a href="/guide" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Field Manual</a>
+          <a href="/terms" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Terms</a>
           <span className="text-zinc-700">|</span>
           <a href="/about" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">About</a>
           <span className="text-zinc-700">|</span>
           <a href="/contact" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Contact</a>
         </div>
+        
+        {/* Clear Fictional Disclaimer */}
+        <p className="text-[9.5px] text-zinc-600 leading-normal">
+          <strong className="text-zinc-500">DISCLAIMER:</strong> ReadarGame is a fictional arcade radar defense game for entertainment and educational demonstration of radar physics. All locations, units, and scenarios are entirely simulated and fictional.
+        </p>
+
         <p className="text-[10px] text-zinc-600">
-          &copy; {new Date().getFullYear()} Readar Tactical Operations. Real-time airspace simulation.
+          &copy; {new Date().getFullYear()} ReadarGame. All rights reserved.
         </p>
       </footer>
 
