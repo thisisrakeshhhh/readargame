@@ -47,7 +47,7 @@ export const SimpleRadarGame: React.FC = () => {
   };
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black select-none font-mono">
+    <div className={`relative bg-black select-none font-mono ${screen === 'START' ? 'w-full min-h-screen overflow-y-auto' : 'w-screen h-screen overflow-hidden'}`}>
       {screen === 'START' ? (
         <StartScreen onEnterRadar={handleEnterRadar} />
       ) : (

@@ -22,7 +22,7 @@ export default function Home() {
 
   if (!mounted) {
     return (
-      <div className="w-screen h-screen bg-black flex items-center justify-center font-mono text-emerald-400">
+      <div className="w-full min-h-screen bg-black flex items-center justify-center font-mono text-emerald-400">
         <div className="flex items-center gap-3">
           <div className="w-4 h-4 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin" />
           <span className="text-xs font-bold tracking-widest uppercase">INITIALIZING RADAR SYSTEM...</span>
@@ -32,7 +32,7 @@ export default function Home() {
   }
 
   return (
-    <div className="w-screen h-screen overflow-hidden bg-black font-mono">
+    <div className="w-full min-h-screen bg-black font-mono">
       <CookieBanner onSavePreferences={() => {}} />
       <SimpleRadarGame />
     </div>
