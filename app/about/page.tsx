@@ -57,7 +57,7 @@ export default function AboutPage() {
                 <Globe className="w-4 h-4 text-emerald-500" /> Real Geographic Cartography
               </h3>
               <p className="text-xs text-zinc-500">
-                Overlaying live tactical radar grids over actual geographic coordinates worldwide, allowing defense operations across Washington, London, Tokyo, Berlin, Kyiv, and custom GPS coordinates.
+                Overlaying live tactical radar grids over actual geographic coordinates worldwide, allowing defense operations across Washington, London, Tokyo, Berlin, Paris, Rome, Sydney, and custom GPS coordinates.
               </p>
             </div>
 

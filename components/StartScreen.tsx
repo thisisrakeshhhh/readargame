@@ -168,9 +168,10 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
               { label: 'Japan', query: 'Japan' },
               { label: 'Germany', query: 'Germany' },
               { label: 'France', query: 'France' },
-              { label: 'Israel', query: 'Israel' },
-              { label: 'Ukraine', query: 'Ukraine' },
-              { label: 'Russia', query: 'Russia' },
+              { label: 'Canada', query: 'Canada' },
+              { label: 'Australia', query: 'Australia' },
+              { label: 'Italy', query: 'Italy' },
+              { label: 'Spain', query: 'Spain' },
             ].map((item) => (
               <button
                 key={item.label}
