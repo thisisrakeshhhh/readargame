@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GeoLocation } from '../types/tactical';
 import { WORLD_LOCATIONS } from '../utils/geoLocations';
 import { StartScreen } from './StartScreen';
@@ -45,6 +45,17 @@ export const SimpleRadarGame: React.FC = () => {
       (window as any).__manualStrike();
     }
   };
+
+  // Keyboard shortcut: Escape returns to main start menu
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && screen === 'RADAR') {
+        setScreen('START');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [screen]);
 
   return (
     <div className={`relative bg-black select-none font-mono ${screen === 'START' ? 'w-full min-h-screen overflow-y-auto' : 'w-screen h-screen overflow-hidden'}`}>
