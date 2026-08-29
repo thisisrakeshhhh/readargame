@@ -13,7 +13,7 @@ export const AdSenseSlot: React.FC<AdSenseSlotProps> = ({
   format = 'auto',
   className = '',
 }) => {
-  const adsenseId = process.env.NEXT_PUBLIC_ADSENSE_ID;
+  const adsenseId = process.env.NEXT_PUBLIC_ADSENSE_ID || 'ca-pub-3265886650944680';
 
   useEffect(() => {
     try {
