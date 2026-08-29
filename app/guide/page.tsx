@@ -2,6 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { ArrowLeft, BookOpen, Target, Radio, Shield, Crosshair, Zap, Cpu } from 'lucide-react';
 import { Metadata } from 'next';
+import { AdSenseSlot } from '../../components/AdSenseSlot';
 
 export const metadata: Metadata = {
   title: 'Tactical Field Manual & Radar Guide - Readar',
@@ -92,6 +93,9 @@ export default function TacticalGuidePage() {
               </p>
             </div>
           </section>
+
+          {/* AdSense Unit */}
+          <AdSenseSlot slotId="1234567890" format="auto" />
 
         </div>
 

@@ -2,6 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { ArrowLeft, Radio, Cpu, Globe, Target, ShieldCheck } from 'lucide-react';
 import { Metadata } from 'next';
+import { AdSenseSlot } from '../../components/AdSenseSlot';
 
 export const metadata: Metadata = {
   title: 'About - Readar Tactical Radar Simulation',
@@ -88,6 +89,9 @@ export default function AboutPage() {
               <li className="p-2 rounded bg-zinc-950 border border-emerald-950">Framework: Next.js 16 (Turbopack)</li>
             </ul>
           </section>
+
+          {/* AdSense Unit */}
+          <AdSenseSlot slotId="2345678901" format="auto" />
 
         </div>
 

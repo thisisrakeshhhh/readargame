@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { GeoLocation } from '../types/tactical';
 import { WORLD_LOCATIONS, searchLocations } from '../utils/geoLocations';
 import { Search, Navigation, Radio, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { AdSenseSlot } from './AdSenseSlot';
 
 interface StartScreenProps {
   onEnterRadar: (location: GeoLocation) => void;
@@ -257,8 +258,13 @@ export const StartScreen: React.FC<StartScreenProps> = ({ onEnterRadar }) => {
 
       </div>
 
+      {/* Google AdSense Display Slot */}
+      <div className="w-full max-w-md z-10 my-2">
+        <AdSenseSlot slotId="9876543210" format="auto" />
+      </div>
+
       {/* Mandatory AdSense & Legal Compliance Navigation */}
-      <footer className="mt-6 z-10 text-center space-y-2 text-xs text-zinc-500">
+      <footer className="mt-4 z-10 text-center space-y-2 text-xs text-zinc-500">
         <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px]">
           <a href="/privacy" className="text-zinc-400 hover:text-emerald-400 underline transition-colors">Privacy Policy</a>
           <span className="text-zinc-700">|</span>
