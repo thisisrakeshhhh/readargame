@@ -16,7 +16,7 @@ export default function RootLayout({
   const adsenseId = process.env.NEXT_PUBLIC_ADSENSE_ID;
 
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         {adsenseId && (
           <>
@@ -30,7 +30,7 @@ export default function RootLayout({
           </>
         )}
       </head>
-      <body className="antialiased bg-black text-green-400 select-none">
+      <body className="antialiased bg-black text-green-400 select-none" suppressHydrationWarning>
         {children}
       </body>
     </html>
